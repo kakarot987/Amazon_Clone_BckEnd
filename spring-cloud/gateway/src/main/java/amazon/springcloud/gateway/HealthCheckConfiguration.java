@@ -3,56 +3,67 @@ package amazon.springcloud.gateway;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.actuate.health.*;
-import org.springframework.context.annotation.Bean;
+import org.springframework.boot.actuate.health.Health;
+import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
-import java.util.LinkedHashMap;
+import java.net.URI;
 
 @Configuration
-public class HealthCheckConfiguration {
+public class HealthCheckConfiguration implements HealthIndicator {
 
     private static final Logger LOG = LoggerFactory.getLogger(HealthCheckConfiguration.class);
-
-    private StatusAggregator healthAggregator;
 
     private final WebClient.Builder webClientBuilder;
 
     private WebClient webClient;
 
     @Autowired
-    public HealthCheckConfiguration(
-        WebClient.Builder webClientBuilder,
-        StatusAggregator healthAggregator
-    ) {
+    public HealthCheckConfiguration(WebClient.Builder webClientBuilder) {
         this.webClientBuilder = webClientBuilder;
-        this.healthAggregator = healthAggregator;
     }
 
-    /*@Bean
-    ReactiveHealthIndicator healthcheckMicroservices() {
+    @Override
+    public Health health() {
+        Health.Builder builder = Health.up();
 
-        HealthContributorRegistry registry = new HealthContributorRegistry();
+        checkHealth("http://auth-server").subscribe(response -> {
+            if (!response) {
+                builder.down().withDetail("auth-server", "Down");
+            }
+        });
 
-        registry.register("auth-server", () -> getHealth("http://auth-server"));
-        registry.register("product", () -> getHealth("http://product"));
-        registry.register("recommendation", () -> getHealth("http://recommendation"));
-        registry.register("review", () -> getHealth("http://review"));
-        registry.register("product-composite", () -> getHealth("http://product-composite"));
+        checkHealth("http://product").subscribe(response -> {
+            if (!response) {
+                builder.down().withDetail("product", "Down");
+            }
+        });
 
-        return new CompositeReactiveHealthIndicator(healthAggregator, registry);
+        checkHealth("http://recommendation").subscribe(response -> {
+            if (!response) {
+                builder.down().withDetail("recommendation", "Down");
+            }
+        });
 
-    }*/
+        checkHealth("http://review").subscribe(response -> {
+            if (!response) {
+                builder.down().withDetail("review", "Down");
+            }
+        });
 
-    private Mono<Health> getHealth(String url) {
-        url += "/actuator/health";
-        LOG.debug("Will call the Health API on URL: {}", url);
-        return getWebClient().get().uri(url).retrieve().bodyToMono(String.class)
-            .map(s -> new Health.Builder().up().build())
-            .onErrorResume(ex -> Mono.just(new Health.Builder().down(ex).build()))
-            .log();
+        checkHealth("http://product-composite").subscribe(response -> {
+            if (!response) {
+                builder.down().withDetail("product-composite", "Down");
+            }
+        });
+
+        return builder.build();
+    }
+
+    private Mono<Boolean> checkHealth(String url) {
+        return getWebClient().get().uri(URI.create(url)).exchangeToMono(response -> Mono.just(response.statusCode().is2xxSuccessful()));
     }
 
     private WebClient getWebClient() {
