@@ -27,7 +27,10 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-security'
 	implementation 'org.glassfish.jaxb:jaxb-runtime'
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	// https://mvnrepository.com/artifact/junit/junit
+	testImplementation 'junit:junit:4.13.2'
 }
+
 
 dependencyManagement {
 	imports {
