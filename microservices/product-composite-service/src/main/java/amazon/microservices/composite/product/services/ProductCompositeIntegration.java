@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.stream.annotation.EnableBinding;
 import org.springframework.cloud.stream.annotation.Output;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.stereotype.Component;
@@ -32,6 +33,8 @@ import java.io.IOException;
 import java.net.URI;
 import java.time.Duration;
 
+import static org.springframework.http.HttpStatus.NOT_FOUND;
+import static org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY;
 import static reactor.core.publisher.Flux.empty;
 import static amazon.api.event.Event.Type.CREATE;
 import static amazon.api.event.Event.Type.DELETE;
@@ -171,19 +174,15 @@ public class ProductCompositeIntegration implements ProductService, Recommendati
 
         WebClientResponseException wcre = (WebClientResponseException)ex;
 
-        switch (wcre.getStatusCode()) {
-
-        case NOT_FOUND:
+        HttpStatusCode statusCode = wcre.getStatusCode();
+        if (statusCode.equals(NOT_FOUND)) {
             return new NotFoundException(getErrorMessage(wcre));
-
-        case UNPROCESSABLE_ENTITY :
+        } else if (statusCode.equals(UNPROCESSABLE_ENTITY)) {
             return new InvalidInputException(getErrorMessage(wcre));
-
-        default:
-            LOG.warn("Got a unexpected HTTP error: {}, will rethrow it", wcre.getStatusCode());
-            LOG.warn("Error body: {}", wcre.getResponseBodyAsString());
-            return ex;
         }
+        LOG.warn("Got a unexpected HTTP error: {}, will rethrow it", wcre.getStatusCode());
+        LOG.warn("Error body: {}", wcre.getResponseBodyAsString());
+        return ex;
     }
 
     private String getErrorMessage(WebClientResponseException ex) {
