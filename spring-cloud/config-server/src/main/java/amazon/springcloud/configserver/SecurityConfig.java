@@ -13,12 +13,12 @@ public class SecurityConfig{
     String cloudLocation;
 
     @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain configure(HttpSecurity http) throws Exception {
         System.out.println(cloudLocation + "-------------------------------" );
         return http.csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
                         .anyRequest().permitAll())
-                .httpBasic(Customizer.withDefaults())
+                .httpBasic(ht -> ht.disable())
                 .build();
     }
 }

@@ -13,16 +13,16 @@ import org.springframework.web.bind.annotation.RestController;
 @EnableEurekaServer
 @SpringBootApplication
 public class EurekaServerApplication {
-	@Autowired
+	/*@Autowired
 	public void setEnv(Environment e)
 	{
 		System.out.println("Msg---------"+e.getProperty("msg"));
-	}
+	}*/
 	public static void main(String[] args) {
 		SpringApplication.run(EurekaServerApplication.class, args);
 	}
 
-	@RestController
+/*	@RestController
 	static class CustomErrorController implements ErrorController {
 
 		private static final String ERROR_MAPPING = "/error";
@@ -31,6 +31,6 @@ public class EurekaServerApplication {
 		public ResponseEntity<Void> error() {
 			return ResponseEntity.notFound().build();
 		}
-	}
+	}*/
 }
 

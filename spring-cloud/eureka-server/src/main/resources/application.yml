@@ -5,7 +5,7 @@ spring:
   security:
     user:
       name: root
-      password: s3cr3t
+      password: root
   cloud.config:
     failFast: true
     retry:
@@ -18,7 +18,7 @@ spring:
     password: ${CONFIG_SERVER_PWD}
 management:
   security:
-    enabled=false
+    enabled: false
 
 ---
 spring.config.activate.on-profile: docker

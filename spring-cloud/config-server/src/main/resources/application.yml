@@ -11,7 +11,7 @@ spring:
   security:
     user:
       name: root
-      password: s3cr3t
+      password: root
   activate:
     on-profile: native
 # WARNING: Exposing all management endpoints over http should only be used during development, must be locked down in production!
@@ -43,4 +43,4 @@ spring:
   security:
     user:
       name: root
-      password: s3cr3t
+      password: root
