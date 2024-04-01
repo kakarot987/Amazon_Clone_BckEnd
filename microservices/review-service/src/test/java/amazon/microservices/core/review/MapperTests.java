@@ -1,75 +1,75 @@
 package amazon.microservices.core.review;
 
-import org.junit.Test;
-import org.mapstruct.factory.Mappers;
 import amazon.api.core.review.Review;
 import amazon.microservices.core.review.persistence.ReviewEntity;
 import amazon.microservices.core.review.services.ReviewMapper;
+import org.junit.jupiter.api.Test;
+import org.mapstruct.factory.Mappers;
 
 import java.util.Collections;
 import java.util.List;
 
-import static org.junit.Assert.*;
-
-public class MapperTests {
-
-    private ReviewMapper mapper = Mappers.getMapper(ReviewMapper.class);
+import static org.junit.jupiter.api.Assertions.*;
 
 
-    @Test
-    public void mapperTests() {
+class MapperTests {
 
-        assertNotNull(mapper);
+  private ReviewMapper mapper = Mappers.getMapper(ReviewMapper.class);
 
-        Review api = new Review(1, 2, "a", "s", "C", "adr");
+  @Test
+  void mapperTests() {
 
-        ReviewEntity entity = mapper.apiToEntity(api);
+    assertNotNull(mapper);
 
-        assertEquals(api.getProductId(), entity.getProductId());
-        assertEquals(api.getReviewId(), entity.getReviewId());
-        assertEquals(api.getAuthor(), entity.getAuthor());
-        assertEquals(api.getSubject(), entity.getSubject());
-        assertEquals(api.getContent(), entity.getContent());
+    Review api = new Review(1, 2, "a", "s", "C", "adr");
 
-        Review api2 = mapper.entityToApi(entity);
+    ReviewEntity entity = mapper.apiToEntity(api);
 
-        assertEquals(api.getProductId(), api2.getProductId());
-        assertEquals(api.getReviewId(), api2.getReviewId());
-        assertEquals(api.getAuthor(), api2.getAuthor());
-        assertEquals(api.getSubject(), api2.getSubject());
-        assertEquals(api.getContent(), api2.getContent());
-        assertNull(api2.getServiceAddress());
-    }
+    assertEquals(api.getProductId(), entity.getProductId());
+    assertEquals(api.getReviewId(), entity.getReviewId());
+    assertEquals(api.getAuthor(), entity.getAuthor());
+    assertEquals(api.getSubject(), entity.getSubject());
+    assertEquals(api.getContent(), entity.getContent());
 
-    @Test
-    public void mapperListTests() {
+    Review api2 = mapper.entityToApi(entity);
 
-        assertNotNull(mapper);
+    assertEquals(api.getProductId(), api2.getProductId());
+    assertEquals(api.getReviewId(), api2.getReviewId());
+    assertEquals(api.getAuthor(), api2.getAuthor());
+    assertEquals(api.getSubject(), api2.getSubject());
+    assertEquals(api.getContent(), api2.getContent());
+    assertNull(api2.getServiceAddress());
+  }
 
-        Review api = new Review(1, 2, "a", "s", "C", "adr");
-        List<Review> apiList = Collections.singletonList(api);
+  @Test
+  void mapperListTests() {
 
-        List<ReviewEntity> entityList = mapper.apiListToEntityList(apiList);
-        assertEquals(apiList.size(), entityList.size());
+    assertNotNull(mapper);
 
-        ReviewEntity entity = entityList.get(0);
+    Review api = new Review(1, 2, "a", "s", "C", "adr");
+    List<Review> apiList = Collections.singletonList(api);
 
-        assertEquals(api.getProductId(), entity.getProductId());
-        assertEquals(api.getReviewId(), entity.getReviewId());
-        assertEquals(api.getAuthor(), entity.getAuthor());
-        assertEquals(api.getSubject(), entity.getSubject());
-        assertEquals(api.getContent(), entity.getContent());
+    List<ReviewEntity> entityList = mapper.apiListToEntityList(apiList);
+    assertEquals(apiList.size(), entityList.size());
 
-        List<Review> api2List = mapper.entityListToApiList(entityList);
-        assertEquals(apiList.size(), api2List.size());
+    ReviewEntity entity = entityList.get(0);
 
-        Review api2 = api2List.get(0);
+    assertEquals(api.getProductId(), entity.getProductId());
+    assertEquals(api.getReviewId(), entity.getReviewId());
+    assertEquals(api.getAuthor(), entity.getAuthor());
+    assertEquals(api.getSubject(), entity.getSubject());
+    assertEquals(api.getContent(), entity.getContent());
 
-        assertEquals(api.getProductId(), api2.getProductId());
-        assertEquals(api.getReviewId(), api2.getReviewId());
-        assertEquals(api.getAuthor(), api2.getAuthor());
-        assertEquals(api.getSubject(), api2.getSubject());
-        assertEquals(api.getContent(), api2.getContent());
-        assertNull(api2.getServiceAddress());
-    }
+    List<Review> api2List = mapper.entityListToApiList(entityList);
+    assertEquals(apiList.size(), api2List.size());
+
+    Review api2 = api2List.get(0);
+
+    assertEquals(api.getProductId(), api2.getProductId());
+    assertEquals(api.getReviewId(), api2.getReviewId());
+    assertEquals(api.getAuthor(), api2.getAuthor());
+    assertEquals(api.getSubject(), api2.getSubject());
+    assertEquals(api.getContent(), api2.getContent());
+    assertNull(api2.getServiceAddress());
+  }
 }

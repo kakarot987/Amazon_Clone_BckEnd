@@ -24,15 +24,18 @@ spring.cloud.stream.kafka.binder:
   brokers: 127.0.0.1
   defaultBrokerPort: 9092
 
-spring.zipkin.sender.type: rabbit
-spring.sleuth.sampler.probability: 1.0
+spring.cloud.stream.defaultBinder: rabbit
 
 # WARNING: Exposing all management endpoints over http should only be used during development, must be locked down in production!
 management.endpoint.health.show-details: "ALWAYS"
 management.endpoints.web.exposure.include: "*"
 
+management.zipkin.tracing.endpoint: http://zipkin-server:9411/api/v2/spans
+management.tracing.sampling.probability: 1.0
+logging.pattern.level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]"
+
 ---
-spring.profiles: docker
+spring.config.activate.on-profile: docker
 
 spring.rabbitmq.host: rabbitmq
 
@@ -43,9 +46,9 @@ app:
   auth-server: auth-server
 
 ---
-spring.profiles: kafka
+spring.config.activate.on-profile: kafka
 
 management.health.rabbit.enabled: false
 spring.cloud.stream.defaultBinder: kafka
-spring.zipkin.sender.type: kafka
 spring.kafka.bootstrap-servers: kafka:9092
+spring.cloud.stream.kafka.binder.replication-factor: 1

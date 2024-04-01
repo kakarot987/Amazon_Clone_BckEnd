@@ -1,15 +1,18 @@
 package amazon.microservices.composite.product.services;
 
+import amazon.util.http.ServiceUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
+import io.github.resilience4j.timelimiter.annotation.TimeLimiter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.cloud.stream.annotation.EnableBinding;
-import org.springframework.cloud.stream.annotation.Output;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
+import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.stereotype.Component;
@@ -33,136 +36,154 @@ import java.io.IOException;
 import java.net.URI;
 import java.time.Duration;
 
+import static java.util.logging.Level.FINE;
 import static org.springframework.http.HttpStatus.NOT_FOUND;
 import static org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY;
 import static reactor.core.publisher.Flux.empty;
 import static amazon.api.event.Event.Type.CREATE;
 import static amazon.api.event.Event.Type.DELETE;
 
-@EnableBinding(ProductCompositeIntegration.MessageSources.class)
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.cloud.stream.function.StreamBridge;
+
+import reactor.core.scheduler.Scheduler;
 @Component
 public class ProductCompositeIntegration implements ProductService, RecommendationService, ReviewService {
 
     private static final Logger LOG = LoggerFactory.getLogger(ProductCompositeIntegration.class);
 
-    private final String productServiceUrl = "http://product";
-    private final String recommendationServiceUrl = "http://recommendation";
-    private final String reviewServiceUrl = "http://review";
+    private static final String PRODUCT_SERVICE_URL = "http://product";
+    private static final String RECOMMENDATION_SERVICE_URL = "http://recommendation";
+    private static final String REVIEW_SERVICE_URL = "http://review";
 
+    private final Scheduler publishEventScheduler;
+    private final WebClient webClient;
     private final ObjectMapper mapper;
-    private final WebClient.Builder webClientBuilder;
+    private final StreamBridge streamBridge;
 
-    private WebClient webClient;
-
-    private final MessageSources messageSources;
-
-    private final int productServiceTimeoutSec;
-
-    public interface MessageSources {
-
-        String OUTPUT_PRODUCTS = "output-products";
-        String OUTPUT_RECOMMENDATIONS = "output-recommendations";
-        String OUTPUT_REVIEWS = "output-reviews";
-
-        @Output(OUTPUT_PRODUCTS)
-        MessageChannel outputProducts();
-
-        @Output(OUTPUT_RECOMMENDATIONS)
-        MessageChannel outputRecommendations();
-
-        @Output(OUTPUT_REVIEWS)
-        MessageChannel outputReviews();
-    }
+    private final ServiceUtil serviceUtil;
 
     @Autowired
     public ProductCompositeIntegration(
-        WebClient.Builder webClientBuilder,
-        ObjectMapper mapper,
-        MessageSources messageSources,
-        @Value("${app.product-service.timeoutSec}") int productServiceTimeoutSec
-
+            @Qualifier("publishEventScheduler") Scheduler publishEventScheduler,
+            WebClient webClient,
+            ObjectMapper mapper,
+            StreamBridge streamBridge,
+            ServiceUtil serviceUtil
     ) {
-        this.webClientBuilder = webClientBuilder;
+        this.webClient = webClient;
+
+        this.publishEventScheduler = publishEventScheduler;
         this.mapper = mapper;
-        this.messageSources = messageSources;
-        this.productServiceTimeoutSec = productServiceTimeoutSec;
+        this.streamBridge = streamBridge;
+        this.serviceUtil = serviceUtil;
     }
 
     @Override
-    public Product createProduct(Product body) {
-        messageSources.outputProducts().send(MessageBuilder.withPayload(new Event(CREATE, body.getProductId(), body)).build());
-        return body;
+    public Mono<Product> createProduct(Product body) {
+
+        return Mono.fromCallable(() -> {
+            sendMessage("products-out-0", new Event(CREATE, body.getProductId(), body));
+            return body;
+        }).subscribeOn(publishEventScheduler);
     }
 
+    @Override
     @Retry(name = "product")
-    @CircuitBreaker(name = "product")
-    @Override
+    @TimeLimiter(name = "product")
+    @CircuitBreaker(name = "product", fallbackMethod = "getProductFallbackValue")
     public Mono<Product> getProduct(int productId, int delay, int faultPercent) {
 
-        URI url = UriComponentsBuilder.fromUriString(productServiceUrl + "/product/{productId}?delay={delay}&faultPercent={faultPercent}").build(productId, delay, faultPercent);
+        URI url = UriComponentsBuilder.fromUriString(PRODUCT_SERVICE_URL
+                + "/product/{productId}?delay={delay}&faultPercent={faultPercent}").build(productId, delay, faultPercent);
         LOG.debug("Will call the getProduct API on URL: {}", url);
 
-        return getWebClient().get().uri(url)
-            .retrieve().bodyToMono(Product.class).log()
-            .onErrorMap(WebClientResponseException.class, ex -> handleException(ex))
-            .timeout(Duration.ofSeconds(productServiceTimeoutSec));
+        return webClient.get().uri(url)
+                .retrieve().bodyToMono(Product.class).log(LOG.getName(), FINE)
+                .onErrorMap(WebClientResponseException.class, ex -> handleException(ex));
+    }
+
+    private Mono<Product> getProductFallbackValue(int productId, int delay, int faultPercent, CallNotPermittedException ex) {
+
+        LOG.warn("Creating a fail-fast fallback product for productId = {}, delay = {}, faultPercent = {} and exception = {} ",
+                productId, delay, faultPercent, ex.toString());
+
+        if (productId == 13) {
+            String errMsg = "Product Id: " + productId + " not found in fallback cache!";
+            LOG.warn(errMsg);
+            throw new NotFoundException(errMsg);
+        }
+
+        return Mono.just(new Product(productId, "Fallback product" + productId, productId, serviceUtil.getServiceAddress()));
     }
 
     @Override
-    public void deleteProduct(int productId) {
-        messageSources.outputProducts().send(MessageBuilder.withPayload(new Event(DELETE, productId, null)).build());
+    public Mono<Void> deleteProduct(int productId) {
+
+        return Mono.fromRunnable(() -> sendMessage("products-out-0", new Event(DELETE, productId, null)))
+                .subscribeOn(publishEventScheduler).then();
     }
 
     @Override
-    public Recommendation createRecommendation(Recommendation body) {
-        messageSources.outputRecommendations().send(MessageBuilder.withPayload(new Event(CREATE, body.getProductId(), body)).build());
-        return body;
+    public Mono<Recommendation> createRecommendation(Recommendation body) {
+
+        return Mono.fromCallable(() -> {
+            sendMessage("recommendations-out-0", new Event(CREATE, body.getProductId(), body));
+            return body;
+        }).subscribeOn(publishEventScheduler);
     }
 
     @Override
     public Flux<Recommendation> getRecommendations(int productId) {
 
-        URI url = UriComponentsBuilder.fromUriString(recommendationServiceUrl + "/recommendation?productId={productId}").build(productId);
+        URI url = UriComponentsBuilder.fromUriString(RECOMMENDATION_SERVICE_URL + "/recommendation?productId={productId}").build(productId);
 
         LOG.debug("Will call the getRecommendations API on URL: {}", url);
 
         // Return an empty result if something goes wrong to make it possible for the composite service to return partial responses
-        return getWebClient().get().uri(url).retrieve().bodyToFlux(Recommendation.class).log().onErrorResume(error -> empty());
+        return webClient.get().uri(url).retrieve().bodyToFlux(Recommendation.class).log(LOG.getName(), FINE).onErrorResume(error -> empty());
     }
 
     @Override
-    public void deleteRecommendations(int productId) {
-        messageSources.outputRecommendations().send(MessageBuilder.withPayload(new Event(DELETE, productId, null)).build());
+    public Mono<Void> deleteRecommendations(int productId) {
+
+        return Mono.fromRunnable(() -> sendMessage("recommendations-out-0", new Event(DELETE, productId, null)))
+                .subscribeOn(publishEventScheduler).then();
     }
 
     @Override
-    public Review createReview(Review body) {
-        messageSources.outputReviews().send(MessageBuilder.withPayload(new Event(CREATE, body.getProductId(), body)).build());
-        return body;
+    public Mono<Review> createReview(Review body) {
+
+        return Mono.fromCallable(() -> {
+            sendMessage("reviews-out-0", new Event(CREATE, body.getProductId(), body));
+            return body;
+        }).subscribeOn(publishEventScheduler);
     }
 
     @Override
     public Flux<Review> getReviews(int productId) {
 
-        URI url = UriComponentsBuilder.fromUriString(reviewServiceUrl + "/review?productId={productId}").build(productId);
+        URI url = UriComponentsBuilder.fromUriString(REVIEW_SERVICE_URL + "/review?productId={productId}").build(productId);
 
         LOG.debug("Will call the getReviews API on URL: {}", url);
 
         // Return an empty result if something goes wrong to make it possible for the composite service to return partial responses
-        return getWebClient().get().uri(url).retrieve().bodyToFlux(Review.class).log().onErrorResume(error -> empty());
-
+        return webClient.get().uri(url).retrieve().bodyToFlux(Review.class).log(LOG.getName(), FINE).onErrorResume(error -> empty());
     }
 
     @Override
-    public void deleteReviews(int productId) {
-        messageSources.outputReviews().send(MessageBuilder.withPayload(new Event(DELETE, productId, null)).build());
+    public Mono<Void> deleteReviews(int productId) {
+
+        return Mono.fromRunnable(() -> sendMessage("reviews-out-0", new Event(DELETE, productId, null)))
+                .subscribeOn(publishEventScheduler).then();
     }
 
-    private WebClient getWebClient() {
-        if (webClient == null) {
-            webClient = webClientBuilder.build();
-        }
-        return webClient;
+    private void sendMessage(String bindingName, Event event) {
+        LOG.debug("Sending a {} message to {}", event.getEventType(), bindingName);
+        Message message = MessageBuilder.withPayload(event)
+                .setHeader("partitionKey", event.getKey())
+                .build();
+        streamBridge.send(bindingName, message);
     }
 
     private Throwable handleException(Throwable ex) {
@@ -174,15 +195,19 @@ public class ProductCompositeIntegration implements ProductService, Recommendati
 
         WebClientResponseException wcre = (WebClientResponseException)ex;
 
-        HttpStatusCode statusCode = wcre.getStatusCode();
-        if (statusCode.equals(NOT_FOUND)) {
-            return new NotFoundException(getErrorMessage(wcre));
-        } else if (statusCode.equals(UNPROCESSABLE_ENTITY)) {
-            return new InvalidInputException(getErrorMessage(wcre));
+        switch (HttpStatus.resolve(wcre.getStatusCode().value())) {
+
+            case NOT_FOUND:
+                return new NotFoundException(getErrorMessage(wcre));
+
+            case UNPROCESSABLE_ENTITY:
+                return new InvalidInputException(getErrorMessage(wcre));
+
+            default:
+                LOG.warn("Got an unexpected HTTP error: {}, will rethrow it", wcre.getStatusCode());
+                LOG.warn("Error body: {}", wcre.getResponseBodyAsString());
+                return ex;
         }
-        LOG.warn("Got a unexpected HTTP error: {}, will rethrow it", wcre.getStatusCode());
-        LOG.warn("Error body: {}", wcre.getResponseBodyAsString());
-        return ex;
     }
 
     private String getErrorMessage(WebClientResponseException ex) {

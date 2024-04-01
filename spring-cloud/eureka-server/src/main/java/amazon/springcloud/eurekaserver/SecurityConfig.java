@@ -6,52 +6,45 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
-import org.springframework.security.config.annotation.authentication.builders.AuthenticationManagerBuilder;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.crypto.password.NoOpPasswordEncoder;
-import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.core.userdetails.User;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
 
 @Configuration
-public class SecurityConfig{
+public class SecurityConfig {
 
     private final String username;
     private final String password;
+
     @Autowired
     public SecurityConfig(
-        @Value("${app.eureka-username}") String username,
-        @Value("${app.eureka-password}") String password
+            @Value("${app.eureka-username}") String username,
+            @Value("${app.eureka-password}") String password
     ) {
         this.username = username;
         this.password = password;
     }
 
     @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
-
-        return http.csrf(csrf -> csrf.disable())
-        .authorizeHttpRequests(auth -> auth
-                .anyRequest().authenticated())
-                 .httpBasic(Customizer.withDefaults())
-                 .build();
+    public InMemoryUserDetailsManager userDetailsService() {
+        System.out.println("UseName---------" + username + "Password-----------" + password);
+        UserDetails user = User.withDefaultPasswordEncoder()
+                .username(username)
+                .password(password)
+                .roles("USER")
+                .build();
+        return new InMemoryUserDetailsManager(user);
     }
 
     @Bean
-    public void authenticationManager(
-            AuthenticationManagerBuilder authConfig) throws Exception {
-        String password = passwordEncoder().encode(this.password);
-
-        authConfig.inMemoryAuthentication()
-                .withUser(username).password(password)
-                .authorities("USER");
+    public SecurityFilterChain configure(HttpSecurity http) throws Exception {
+        return  http
+                .csrf(cs -> cs.disable())
+                .authorizeRequests(auth -> auth.anyRequest().permitAll())
+                .httpBasic(Customizer.withDefaults())
+                .build();
     }
-
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
-    }
-
 }
-
 

@@ -19,7 +19,7 @@ import org.springframework.data.mongodb.core.mapping.MongoPersistentEntity;
 import org.springframework.data.mongodb.core.mapping.MongoPersistentProperty;
 
 @SpringBootApplication
-@ComponentScan("se.magnus")
+@ComponentScan("amazon.*")
 public class RecommendationServiceApplication {
 
 	private static final Logger LOG = LoggerFactory.getLogger(RecommendationServiceApplication.class);

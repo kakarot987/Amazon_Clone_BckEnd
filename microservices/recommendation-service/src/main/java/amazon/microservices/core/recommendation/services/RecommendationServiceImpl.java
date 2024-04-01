@@ -14,6 +14,8 @@ import amazon.api.core.recommendation.RecommendationService;
 import amazon.util.exceptions.InvalidInputException;
 import amazon.util.http.ServiceUtil;
 
+import static java.util.logging.Level.FINE;
+
 @RestController
 public class RecommendationServiceImpl implements RecommendationService {
 
@@ -33,38 +35,52 @@ public class RecommendationServiceImpl implements RecommendationService {
     }
 
     @Override
-    public Recommendation createRecommendation(Recommendation body) {
+    public Mono<Recommendation> createRecommendation(Recommendation body) {
 
-        if (body.getProductId() < 1) throw new InvalidInputException("Invalid productId: " + body.getProductId());
+        if (body.getProductId() < 1) {
+            throw new InvalidInputException("Invalid productId: " + body.getProductId());
+        }
 
         RecommendationEntity entity = mapper.apiToEntity(body);
         Mono<Recommendation> newEntity = repository.save(entity)
-            .log()
-            .onErrorMap(
-                DuplicateKeyException.class,
-                ex -> new InvalidInputException("Duplicate key, Product Id: " + body.getProductId() + ", Recommendation Id:" + body.getRecommendationId()))
-            .map(e -> mapper.entityToApi(e));
+                .log(LOG.getName(), FINE)
+                .onErrorMap(
+                        DuplicateKeyException.class,
+                        ex -> new InvalidInputException("Duplicate key, Product Id: " + body.getProductId() + ", Recommendation Id:" + body.getRecommendationId()))
+                .map(e -> mapper.entityToApi(e));
 
-        return newEntity.block();
+        return newEntity;
     }
 
     @Override
     public Flux<Recommendation> getRecommendations(int productId) {
 
-        if (productId < 1) throw new InvalidInputException("Invalid productId: " + productId);
+        if (productId < 1) {
+            throw new InvalidInputException("Invalid productId: " + productId);
+        }
+
+        LOG.info("Will get recommendations for product with id={}", productId);
 
         return repository.findByProductId(productId)
-            .log()
-            .map(e -> mapper.entityToApi(e))
-            .map(e -> {e.setServiceAddress(serviceUtil.getServiceAddress()); return e;});
+                .log(LOG.getName(), FINE)
+                .map(e -> mapper.entityToApi(e))
+                .map(e -> setServiceAddress(e));
     }
 
     @Override
-    public void deleteRecommendations(int productId) {
+    public Mono<Void> deleteRecommendations(int productId) {
 
-        if (productId < 1) throw new InvalidInputException("Invalid productId: " + productId);
+        if (productId < 1) {
+            throw new InvalidInputException("Invalid productId: " + productId);
+        }
 
         LOG.debug("deleteRecommendations: tries to delete recommendations for the product with productId: {}", productId);
-        repository.deleteAll(repository.findByProductId(productId)).block();
+        return repository.deleteAll(repository.findByProductId(productId));
+    }
+
+    private Recommendation setServiceAddress(Recommendation e) {
+        e.setServiceAddress(serviceUtil.getServiceAddress());
+        return e;
     }
 }
+

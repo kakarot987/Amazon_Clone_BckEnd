@@ -1,73 +1,78 @@
 package amazon.api.composite.product;
 
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
-import io.swagger.annotations.ApiResponse;
-import io.swagger.annotations.ApiResponses;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
 
-@Api(description = "REST API for composite product information.")
+
+@SecurityRequirement(name = "security_auth")
+@Tag(name = "ProductComposite", description = "REST API for composite product information.")
 public interface ProductCompositeService {
 
     /**
-     * Sample usage:
+     * Sample usage, see below.
      *
      * curl -X POST $HOST:$PORT/product-composite \
      *   -H "Content-Type: application/json" --data \
      *   '{"productId":123,"name":"product 123","weight":123}'
      *
-     * @param body
+     * @param body A JSON representation of the new composite product
      */
-    @ApiOperation(
-        value = "${api.product-composite.create-composite-product.description}",
-        notes = "${api.product-composite.create-composite-product.notes}")
+    @Operation(
+            summary = "${api.product-composite.create-composite-product.description}",
+            description = "${api.product-composite.create-composite-product.notes}")
     @ApiResponses(value = {
-        @ApiResponse(code = 400, message = "Bad Request, invalid format of the request. See response message for more information."),
-        @ApiResponse(code = 422, message = "Unprocessable entity, input parameters caused the processing to fail. See response message for more information.")
+            @ApiResponse(responseCode = "400", description = "${api.responseCodes.badRequest.description}"),
+            @ApiResponse(responseCode = "422", description = "${api.responseCodes.unprocessableEntity.description}")
     })
+    @ResponseStatus(HttpStatus.ACCEPTED)
     @PostMapping(
-        value    = "/product-composite",
-        consumes = "application/json")
-    Mono<Void> createCompositeProduct(@RequestBody ProductAggregate body);
+            value    = "/product-composite",
+            consumes = "application/json")
+    Mono<Void> createProduct(@RequestBody ProductAggregate body);
 
     /**
-     * Sample usage: curl $HOST:$PORT/product-composite/1
+     * Sample usage: "curl $HOST:$PORT/product-composite/1".
      *
-     * @param productId
+     * @param productId Id of the product
      * @return the composite product info, if found, else null
      */
-    @ApiOperation(
-        value = "${api.product-composite.get-composite-product.description}",
-        notes = "${api.product-composite.get-composite-product.notes}")
+    @Operation(
+            summary = "${api.product-composite.get-composite-product.description}",
+            description = "${api.product-composite.get-composite-product.notes}")
     @ApiResponses(value = {
-        @ApiResponse(code = 400, message = "Bad Request, invalid format of the request. See response message for more information."),
-        @ApiResponse(code = 404, message = "Not found, the specified id does not exist."),
-        @ApiResponse(code = 422, message = "Unprocessable entity, input parameters caused the processing to fail. See response message for more information.")
+            @ApiResponse(responseCode = "200", description = "${api.responseCodes.ok.description}"),
+            @ApiResponse(responseCode = "400", description = "${api.responseCodes.badRequest.description}"),
+            @ApiResponse(responseCode = "404", description = "${api.responseCodes.notFound.description}"),
+            @ApiResponse(responseCode = "422", description = "${api.responseCodes.unprocessableEntity.description}")
     })
     @GetMapping(
-        value    = "/product-composite/{productId}",
-        produces = "application/json")
-    Mono<ProductAggregate> getCompositeProduct(
-        @PathVariable int productId,
-        @RequestParam(value = "delay", required = false, defaultValue = "0") int delay,
-        @RequestParam(value = "faultPercent", required = false, defaultValue = "0") int faultPercent
+            value = "/product-composite/{productId}",
+            produces = "application/json")
+    Mono<ProductAggregate> getProduct(
+            @PathVariable int productId,
+            @RequestParam(value = "delay", required = false, defaultValue = "0") int delay,
+            @RequestParam(value = "faultPercent", required = false, defaultValue = "0") int faultPercent
     );
 
     /**
-     * Sample usage:
+     * Sample usage: "curl -X DELETE $HOST:$PORT/product-composite/1".
      *
-     * curl -X DELETE $HOST:$PORT/product-composite/1
-     *
-     * @param productId
+     * @param productId Id of the product
      */
-    @ApiOperation(
-        value = "${api.product-composite.delete-composite-product.description}",
-        notes = "${api.product-composite.delete-composite-product.notes}")
+    @Operation(
+            summary = "${api.product-composite.delete-composite-product.description}",
+            description = "${api.product-composite.delete-composite-product.notes}")
     @ApiResponses(value = {
-        @ApiResponse(code = 400, message = "Bad Request, invalid format of the request. See response message for more information."),
-        @ApiResponse(code = 422, message = "Unprocessable entity, input parameters caused the processing to fail. See response message for more information.")
+            @ApiResponse(responseCode = "400", description = "${api.responseCodes.badRequest.description}"),
+            @ApiResponse(responseCode = "422", description = "${api.responseCodes.unprocessableEntity.description}")
     })
+    @ResponseStatus(HttpStatus.ACCEPTED)
     @DeleteMapping(value = "/product-composite/{productId}")
-    Mono<Void> deleteCompositeProduct(@PathVariable int productId);
+    Mono<Void> deleteProduct(@PathVariable int productId);
 }

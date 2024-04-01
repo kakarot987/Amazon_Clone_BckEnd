@@ -4,13 +4,20 @@ api:
     version:
     title:
     description:
-    termsOfServiceUrl:
+    termsOfService:
     license:
     licenseUrl:
-
+    externalDocDesc:
+    externalDocUrl:
     contact:
       name:
       url:
       email:
 
-app.product-service.timeoutSec: 2
+spring.cloud.stream:
+  defaultBinder: rabbit
+  default.contentType: application/json
+  bindings:
+    products-out-0.destination: products
+    recommendations-out-0.destination: recommendations
+    reviews-out-0.destination: reviews

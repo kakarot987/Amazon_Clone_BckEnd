@@ -2,30 +2,32 @@
 package amazon.microservices.composite.product;
 
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.config.web.server.ServerHttpSecurity;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.server.SecurityWebFilterChain;
 
 import static org.springframework.http.HttpMethod.*;
 
+@Configuration
 @EnableWebFluxSecurity
 public class SecurityConfig {
 	@Bean
-	public SecurityFilterChain filterChain(HttpSecurity httpSecurity) throws Exception {
-		return httpSecurity
-				.csrf(csrf -> csrf.disable())
-				.authorizeHttpRequests(auth -> auth
-						.requestMatchers("/actuator/**").permitAll()
-						.requestMatchers(POST, "/product-composite/**").hasAuthority("SCOPE_product:write")
-						.requestMatchers(DELETE, "/product-composite/**").hasAuthority("SCOPE_product:write")
-						.requestMatchers(GET, "/product-composite/**").hasAuthority("SCOPE_product:read")
-						.anyRequest().authenticated()
+	SecurityWebFilterChain springSecurityFilterChain(ServerHttpSecurity http) {
+		return http
+				.authorizeExchange(auth -> auth.pathMatchers("/openapi/**").permitAll()
+						.pathMatchers("/webjars/**").permitAll()
+						.pathMatchers("/actuator/**").permitAll()
+						.pathMatchers(POST, "/product-composite/**").hasAuthority("SCOPE_product:write")
+						.pathMatchers(DELETE, "/product-composite/**").hasAuthority("SCOPE_product:write")
+						.pathMatchers(GET, "/product-composite/**").hasAuthority("SCOPE_product:read")
+						.anyExchange().authenticated()
 				)
-				.sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-				.httpBasic(Customizer.withDefaults())
-				.oauth2ResourceServer((oauth2) -> oauth2.jwt(Customizer.withDefaults()))
+				.oauth2ResourceServer(oauth -> oauth.jwt(Customizer.withDefaults()))
 				.build();
 	}
 }

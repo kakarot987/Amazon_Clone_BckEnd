@@ -19,7 +19,7 @@ import org.springframework.data.mongodb.core.mapping.MongoPersistentProperty;
 import amazon.microservices.core.product.persistence.ProductEntity;
 
 @SpringBootApplication
-@ComponentScan("se.magnus")
+@ComponentScan("amazon.*")
 public class ProductServiceApplication {
 
 	private static final Logger LOG = LoggerFactory.getLogger(ProductServiceApplication.class);

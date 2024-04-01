@@ -15,7 +15,7 @@ import reactor.core.scheduler.Schedulers;
 import java.util.concurrent.Executors;
 
 @SpringBootApplication
-@ComponentScan("se.magnus")
+@ComponentScan("amazon.*")
 public class ReviewServiceApplication {
 
 	private static final Logger LOG = LoggerFactory.getLogger(ReviewServiceApplication.class);

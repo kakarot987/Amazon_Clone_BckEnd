@@ -52,3 +52,4 @@ public class Product {
         this.serviceAddress = serviceAddress;
     }
 }
+

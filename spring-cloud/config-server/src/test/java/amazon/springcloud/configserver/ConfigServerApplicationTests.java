@@ -1,15 +1,11 @@
 package amazon.springcloud.configserver;
 
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.junit4.SpringRunner;
 
 import static org.springframework.boot.test.context.SpringBootTest.WebEnvironment.RANDOM_PORT;
 
-@RunWith(SpringRunner.class)
-@SpringBootTest(webEnvironment=RANDOM_PORT, properties = {"spring.profiles.active=native"})
-
+@SpringBootTest(webEnvironment=RANDOM_PORT, properties = {"spring.config.activate.on-profile=native","spring.cloud.compatibility-verifier.enabled=false"})
 public class ConfigServerApplicationTests {
 
 	@Test

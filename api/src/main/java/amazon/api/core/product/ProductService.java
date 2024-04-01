@@ -5,22 +5,22 @@ import reactor.core.publisher.Mono;
 
 public interface ProductService {
 
-    Product createProduct(@RequestBody Product body);
+    Mono<Product> createProduct(Product body);
 
     /**
-     * Sample usage: curl $HOST:$PORT/product/1
+     * Sample usage: "curl $HOST:$PORT/product/1".
      *
-     * @param productId
+     * @param productId Id of the product
      * @return the product, if found, else null
      */
     @GetMapping(
-        value    = "/product/{productId}",
-        produces = "application/json")
+            value = "/product/{productId}",
+            produces = "application/json")
     Mono<Product> getProduct(
-         @PathVariable int productId,
-         @RequestParam(value = "delay", required = false, defaultValue = "0") int delay,
-         @RequestParam(value = "faultPercent", required = false, defaultValue = "0") int faultPercent
+            @PathVariable int productId,
+            @RequestParam(value = "delay", required = false, defaultValue = "0") int delay,
+            @RequestParam(value = "faultPercent", required = false, defaultValue = "0") int faultPercent
     );
 
-    void deleteProduct(@PathVariable int productId);
+    Mono<Void> deleteProduct(int productId);
 }

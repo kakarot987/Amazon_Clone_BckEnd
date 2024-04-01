@@ -1,11 +1,13 @@
 package amazon.microservices.core.product.services;
 
+import java.time.Duration;
+import java.util.Random;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.web.bind.annotation.RestController;
-import reactor.core.publisher.Mono;
+
 import amazon.api.core.product.Product;
 import amazon.api.core.product.ProductService;
 import amazon.microservices.core.product.persistence.ProductEntity;
@@ -13,10 +15,9 @@ import amazon.microservices.core.product.persistence.ProductRepository;
 import amazon.util.exceptions.InvalidInputException;
 import amazon.util.exceptions.NotFoundException;
 import amazon.util.http.ServiceUtil;
+import reactor.core.publisher.Mono;
 
-import java.util.Random;
-
-import static reactor.core.publisher.Mono.error;
+import static java.util.logging.Level.FINE;
 
 @RestController
 public class ProductServiceImpl implements ProductService {
@@ -37,67 +38,81 @@ public class ProductServiceImpl implements ProductService {
     }
 
     @Override
-    public Product createProduct(Product body) {
+    public Mono<Product> createProduct(Product body) {
 
-        if (body.getProductId() < 1) throw new InvalidInputException("Invalid productId: " + body.getProductId());
+        if (body.getProductId() < 1) {
+            throw new InvalidInputException("Invalid productId: " + body.getProductId());
+        }
 
         ProductEntity entity = mapper.apiToEntity(body);
         Mono<Product> newEntity = repository.save(entity)
-            .log()
-            .onErrorMap(
-                DuplicateKeyException.class,
-                ex -> new InvalidInputException("Duplicate key, Product Id: " + body.getProductId()))
-            .map(e -> mapper.entityToApi(e));
+                .log(LOG.getName(), FINE)
+                .onErrorMap(
+                        DuplicateKeyException.class,
+                        ex -> new InvalidInputException("Duplicate key, Product Id: " + body.getProductId()))
+                .map(e -> mapper.entityToApi(e));
 
-        return newEntity.block();
+        return newEntity;
     }
 
     @Override
     public Mono<Product> getProduct(int productId, int delay, int faultPercent) {
 
-        if (productId < 1) throw new InvalidInputException("Invalid productId: " + productId);
+        if (productId < 1) {
+            throw new InvalidInputException("Invalid productId: " + productId);
+        }
 
-        if (delay > 0) simulateDelay(delay);
-
-        if (faultPercent > 0) throwErrorIfBadLuck(faultPercent);
+        LOG.info("Will get product info for id={}", productId);
 
         return repository.findByProductId(productId)
-            .switchIfEmpty(error(new NotFoundException("No product found for productId: " + productId)))
-            .log()
-            .map(e -> mapper.entityToApi(e))
-            .map(e -> {e.setServiceAddress(serviceUtil.getServiceAddress()); return e;});
+                .map(e -> throwErrorIfBadLuck(e, faultPercent))
+                .delayElement(Duration.ofSeconds(delay))
+                .switchIfEmpty(Mono.error(new NotFoundException("No product found for productId: " + productId)))
+                .log(LOG.getName(), FINE)
+                .map(e -> mapper.entityToApi(e))
+                .map(e -> setServiceAddress(e));
     }
 
     @Override
-    public void deleteProduct(int productId) {
+    public Mono<Void> deleteProduct(int productId) {
 
-        if (productId < 1) throw new InvalidInputException("Invalid productId: " + productId);
+        if (productId < 1) {
+            throw new InvalidInputException("Invalid productId: " + productId);
+        }
 
         LOG.debug("deleteProduct: tries to delete an entity with productId: {}", productId);
-        repository.findByProductId(productId).log().map(e -> repository.delete(e)).flatMap(e -> e).block();
+        return repository.findByProductId(productId).log(LOG.getName(), FINE).map(e -> repository.delete(e)).flatMap(e -> e);
     }
 
-    private void simulateDelay(int delay) {
-        LOG.debug("Sleeping for {} seconds...", delay);
-        try {Thread.sleep(delay * 1000);} catch (InterruptedException e) {}
-        LOG.debug("Moving on...");
+    private Product setServiceAddress(Product e) {
+        e.setServiceAddress(serviceUtil.getServiceAddress());
+        return e;
     }
 
-    private void throwErrorIfBadLuck(int faultPercent) {
+    private ProductEntity throwErrorIfBadLuck(ProductEntity entity, int faultPercent) {
+
+        if (faultPercent == 0) {
+            return entity;
+        }
+
         int randomThreshold = getRandomNumber(1, 100);
+
         if (faultPercent < randomThreshold) {
             LOG.debug("We got lucky, no error occurred, {} < {}", faultPercent, randomThreshold);
         } else {
-            LOG.debug("Bad luck, an error occurred, {} >= {}", faultPercent, randomThreshold);
+            LOG.info("Bad luck, an error occurred, {} >= {}", faultPercent, randomThreshold);
             throw new RuntimeException("Something went wrong...");
         }
+
+        return entity;
     }
 
     private final Random randomNumberGenerator = new Random();
+
     private int getRandomNumber(int min, int max) {
 
         if (max < min) {
-            throw new RuntimeException("Max must be greater than min");
+            throw new IllegalArgumentException("Max must be greater than min");
         }
 
         return randomNumberGenerator.nextInt((max - min) + 1) + min;

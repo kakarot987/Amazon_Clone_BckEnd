@@ -1,4 +1,4 @@
-FROM openjdk:12.0.2
+FROM openjdk:23
 
 EXPOSE 9999
 

@@ -1,16 +1,46 @@
-server.port: 8888
+server:
+  port: 8888
 
-spring.cloud.config.server.native.searchLocations: file:${PWD}/config-repo
-
+spring:
+  cloud:
+    config:
+      server:
+        git:
+          uri: D:\Learning\config-repo
+          cloneOnStart: true
+  security:
+    user:
+      name: root
+      password: s3cr3t
+  activate:
+    on-profile: native
 # WARNING: Exposing all management endpoints over http should only be used during development, must be locked down in production!
-management.endpoint.health.show-details: "ALWAYS"
-management.endpoints.web.exposure.include: "*"
+management:
+  endpoint:
+    health:
+      show-details: "ALWAYS"
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+  security:
+    enabled: false
 
 logging:
   level:
     root: info
 
 ---
-spring.profiles: docker
-spring.cloud.config.server.native.searchLocations: file:/config-repo
-
+spring:
+  config:
+    activate:
+      on-profile: docker
+  cloud:
+    config:
+      server:
+        git:
+          uri: D:\Learning\config-repo
+  security:
+    user:
+      name: root
+      password: s3cr3t

@@ -15,17 +15,19 @@
  */
 package sample;
 
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.junit4.SpringRunner;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.util.Base64;
+
+import static org.hamcrest.core.Is.is;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -33,32 +35,42 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *
  * @author Josh Cummings
  */
-@RunWith(SpringRunner.class)
-@SpringBootTest(properties = {"eureka.client.enabled=false","spring.cloud.config.enabled=false"})
+@SpringBootTest(properties = {"eureka.client.enabled=false", "spring.cloud.config.enabled=false","spring.cloud.compatibility-verifier.enabled=false"})
 @AutoConfigureMockMvc
-public class OAuth2AuthorizationServerApplicationTests {
+class OAuth2AuthorizationServerApplicationTests {
 
 	@Autowired
 	MockMvc mvc;
 
 	@Test
-	public void requestTokenWhenUsingPasswordGrantTypeThenOk()
-			throws Exception {
+	void requestTokenUsingClientCredentialsGrantType() throws Exception {
 
-		this.mvc.perform(post("/oauth/token")
-			.param("grant_type", "password")
-			.param("username", "magnus")
-			.param("password", "password")
-			.header("Authorization", "Basic cmVhZGVyOnNlY3JldA=="))
+		String base64Credentials = Base64.getEncoder().encodeToString("writer:secret-writer".getBytes());
+		this.mvc.perform(post("/oauth2/token")
+						.param("grant_type", "client_credentials")
+						.header("Authorization", "Basic " + base64Credentials))
 				.andExpect(status().isOk());
 	}
 
 	@Test
-	public void requestJwkSetWhenUsingDefaultsThenOk()
-			throws Exception {
+	void requestOpenidConfiguration() throws Exception {
 
-		this.mvc.perform(get("/.well-known/jwks.json"))
+		this.mvc.perform(get("/.well-known/openid-configuration"))
 				.andExpect(status().isOk());
+	}
+
+	@Test
+	void requestJwkSet() throws Exception {
+
+		this.mvc.perform(get("/oauth2/jwks"))
+				.andExpect(status().isOk());
+	}
+
+	@Test
+	void healthy() throws Exception {
+		this.mvc.perform(get("/actuator/health"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status", is("UP")));
 	}
 
 }

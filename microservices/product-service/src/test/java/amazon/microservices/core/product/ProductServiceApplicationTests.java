@@ -1,154 +1,144 @@
 package amazon.microservices.core.product;
 
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.cloud.stream.messaging.Sink;
-import org.springframework.http.HttpStatus;
-import org.springframework.integration.channel.AbstractMessageChannel;
-import org.springframework.messaging.MessagingException;
-import org.springframework.messaging.support.GenericMessage;
-import org.springframework.test.context.junit4.SpringRunner;
-import org.springframework.test.web.reactive.server.WebTestClient;
 import amazon.api.core.product.Product;
 import amazon.api.event.Event;
 import amazon.microservices.core.product.persistence.ProductRepository;
 import amazon.util.exceptions.InvalidInputException;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpStatus;
+import org.springframework.test.web.reactive.server.WebTestClient;
 
-import static org.junit.Assert.*;
+import java.util.function.Consumer;
+
+import static amazon.api.event.Event.Type.CREATE;
+import static amazon.api.event.Event.Type.DELETE;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.boot.test.context.SpringBootTest.WebEnvironment.RANDOM_PORT;
 import static org.springframework.http.HttpStatus.*;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
-import static amazon.api.event.Event.Type.CREATE;
-import static amazon.api.event.Event.Type.DELETE;
 
-@RunWith(SpringRunner.class)
-@SpringBootTest(webEnvironment=RANDOM_PORT, properties = {"spring.data.mongodb.port: 0", "eureka.client.enabled=false", "spring.cloud.config.enabled=false", "server.error.include-message=always"})
-public class ProductServiceApplicationTests {
+@SpringBootTest(webEnvironment = RANDOM_PORT, properties = {
+  "eureka.client.enabled=false",
+  "spring.cloud.config.enabled=false","spring.main.allow-bean-definition-overriding=true","spring.cloud.compatibility-verifier.enabled=false"})
+class ProductServiceApplicationTests extends MongoDbTestBase {
 
-    @Autowired
-    private WebTestClient client;
+  @Autowired
+  private WebTestClient client;
 
-	@Autowired
-	private ProductRepository repository;
+  @Autowired
+  private ProductRepository repository;
 
-	@Autowired
-	private Sink channels;
+  @Autowired
+  @Qualifier("messageProcessor")
+  private Consumer<Event<Integer, Product>> messageProcessor;
 
-	private AbstractMessageChannel input = null;
+  @BeforeEach
+  void setupDb() {
+    repository.deleteAll().block();
+  }
 
-	@Before
-	public void setupDb() {
-		input = (AbstractMessageChannel) channels.input();
-		repository.deleteAll().block();
-	}
+  @Test
+  void getProductById() {
 
-	@Test
-	public void getProductById() {
+    int productId = 1;
 
-		int productId = 1;
+    assertNull(repository.findByProductId(productId).block());
+    assertEquals(0, (long)repository.count().block());
 
-		assertNull(repository.findByProductId(productId).block());
-		assertEquals(0, (long)repository.count().block());
+    sendCreateProductEvent(productId);
 
-		sendCreateProductEvent(productId);
+    assertNotNull(repository.findByProductId(productId).block());
+    assertEquals(1, (long)repository.count().block());
 
-		assertNotNull(repository.findByProductId(productId).block());
-		assertEquals(1, (long)repository.count().block());
+    getAndVerifyProduct(productId, OK)
+      .jsonPath("$.productId").isEqualTo(productId);
+  }
 
-		getAndVerifyProduct(productId, OK)
-            .jsonPath("$.productId").isEqualTo(productId);
-	}
+  @Test
+  void duplicateError() {
 
-	@Test
-	public void duplicateError() {
+    int productId = 1;
 
-		int productId = 1;
+    assertNull(repository.findByProductId(productId).block());
 
-		assertNull(repository.findByProductId(productId).block());
+    sendCreateProductEvent(productId);
 
-		sendCreateProductEvent(productId);
+    assertNotNull(repository.findByProductId(productId).block());
 
-		assertNotNull(repository.findByProductId(productId).block());
+    InvalidInputException thrown = assertThrows(
+      InvalidInputException.class,
+      () -> sendCreateProductEvent(productId),
+      "Expected a InvalidInputException here!");
+    assertEquals("Duplicate key, Product Id: " + productId, thrown.getMessage());
+  }
 
-		try {
-			sendCreateProductEvent(productId);
-			fail("Expected a MessagingException here!");
-		} catch (MessagingException me) {
-			if (me.getCause() instanceof InvalidInputException)	{
-				InvalidInputException iie = (InvalidInputException)me.getCause();
-				assertEquals("Duplicate key, Product Id: " + productId, iie.getMessage());
-			} else {
-				fail("Expected a InvalidInputException as the root cause!");
-			}
-		}
-	}
+  @Test
+  void deleteProduct() {
 
-	@Test
-	public void deleteProduct() {
+    int productId = 1;
 
-		int productId = 1;
+    sendCreateProductEvent(productId);
+    assertNotNull(repository.findByProductId(productId).block());
 
-		sendCreateProductEvent(productId);
-		assertNotNull(repository.findByProductId(productId).block());
+    sendDeleteProductEvent(productId);
+    assertNull(repository.findByProductId(productId).block());
 
-		sendDeleteProductEvent(productId);
-		assertNull(repository.findByProductId(productId).block());
+    sendDeleteProductEvent(productId);
+  }
 
-		sendDeleteProductEvent(productId);
-	}
+  @Test
+  void getProductInvalidParameterString() {
 
-	@Test
-	public void getProductInvalidParameterString() {
+    getAndVerifyProduct("/no-integer", BAD_REQUEST)
+      .jsonPath("$.path").isEqualTo("/product/no-integer")
+      .jsonPath("$.message").isEqualTo("Type mismatch.");
+  }
 
-		getAndVerifyProduct("/no-integer", BAD_REQUEST)
-            .jsonPath("$.path").isEqualTo("/product/no-integer")
-            .jsonPath("$.message").isEqualTo("Type mismatch.");
-	}
+  @Test
+  void getProductNotFound() {
 
-	@Test
-	public void getProductNotFound() {
+    int productIdNotFound = 13;
+    getAndVerifyProduct(productIdNotFound, NOT_FOUND)
+      .jsonPath("$.path").isEqualTo("/product/" + productIdNotFound)
+      .jsonPath("$.message").isEqualTo("No product found for productId: " + productIdNotFound);
+  }
 
-		int productIdNotFound = 13;
-		getAndVerifyProduct(productIdNotFound, NOT_FOUND)
-            .jsonPath("$.path").isEqualTo("/product/" + productIdNotFound)
-            .jsonPath("$.message").isEqualTo("No product found for productId: " + productIdNotFound);
-	}
+  @Test
+  void getProductInvalidParameterNegativeValue() {
 
-	@Test
-	public void getProductInvalidParameterNegativeValue() {
+    int productIdInvalid = -1;
 
-        int productIdInvalid = -1;
+    getAndVerifyProduct(productIdInvalid, UNPROCESSABLE_ENTITY)
+      .jsonPath("$.path").isEqualTo("/product/" + productIdInvalid)
+      .jsonPath("$.message").isEqualTo("Invalid productId: " + productIdInvalid);
+  }
 
-		getAndVerifyProduct(productIdInvalid, UNPROCESSABLE_ENTITY)
-            .jsonPath("$.path").isEqualTo("/product/" + productIdInvalid)
-            .jsonPath("$.message").isEqualTo("Invalid productId: " + productIdInvalid);
-	}
+  private WebTestClient.BodyContentSpec getAndVerifyProduct(int productId, HttpStatus expectedStatus) {
+    return getAndVerifyProduct("/" + productId, expectedStatus);
+  }
 
-	private WebTestClient.BodyContentSpec getAndVerifyProduct(int productId, HttpStatus expectedStatus) {
-		return getAndVerifyProduct("/" + productId, expectedStatus);
-	}
+  private WebTestClient.BodyContentSpec getAndVerifyProduct(String productIdPath, HttpStatus expectedStatus) {
+    return client.get()
+      .uri("/product" + productIdPath)
+      .accept(APPLICATION_JSON)
+      .exchange()
+      .expectStatus().isEqualTo(expectedStatus)
+      .expectHeader().contentType(APPLICATION_JSON)
+      .expectBody();
+  }
 
-	private WebTestClient.BodyContentSpec getAndVerifyProduct(String productIdPath, HttpStatus expectedStatus) {
-		return client.get()
-			.uri("/product" + productIdPath)
-			.accept(APPLICATION_JSON)
-			.exchange()
-			.expectStatus().isEqualTo(expectedStatus)
-			.expectHeader().contentType(APPLICATION_JSON)
-			.expectBody();
-	}
+  private void sendCreateProductEvent(int productId) {
+    Product product = new Product(productId, "Name " + productId, productId, "SA");
+    Event<Integer, Product> event = new Event(CREATE, productId, product);
+    messageProcessor.accept(event);
+  }
 
-	private void sendCreateProductEvent(int productId) {
-		Product product = new Product(productId, "Name " + productId, productId, "SA");
-		Event<Integer, Product> event = new Event(CREATE, productId, product);
-		input.send(new GenericMessage<>(event));
-	}
-
-	private void sendDeleteProductEvent(int productId) {
-		Event<Integer, Product> event = new Event(DELETE, productId, null);
-		input.send(new GenericMessage<>(event));
-	}
+  private void sendDeleteProductEvent(int productId) {
+    Event<Integer, Product> event = new Event(DELETE, productId, null);
+    messageProcessor.accept(event);
+  }
 }

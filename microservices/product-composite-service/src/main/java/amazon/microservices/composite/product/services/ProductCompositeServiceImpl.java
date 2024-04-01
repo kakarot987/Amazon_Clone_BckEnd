@@ -1,7 +1,15 @@
 package amazon.microservices.composite.product.services;
 
 import amazon.api.composite.product.*;
-import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import static java.util.logging.Level.FINE;
+
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
+
+import amazon.microservices.composite.product.services.tracing.ObservationUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,6 +20,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
+
 import amazon.api.core.product.Product;
 import amazon.api.core.recommendation.Recommendation;
 import amazon.api.core.review.Review;
@@ -27,48 +36,55 @@ public class ProductCompositeServiceImpl implements ProductCompositeService {
 
     private static final Logger LOG = LoggerFactory.getLogger(ProductCompositeServiceImpl.class);
 
-    private final SecurityContext nullSC = new SecurityContextImpl();
+    private final SecurityContext nullSecCtx = new SecurityContextImpl();
 
     private final ServiceUtil serviceUtil;
+    private final ObservationUtil observationUtil;
     private final ProductCompositeIntegration integration;
 
     @Autowired
-    public ProductCompositeServiceImpl(ServiceUtil serviceUtil, ProductCompositeIntegration integration) {
+    public ProductCompositeServiceImpl(ServiceUtil serviceUtil, ObservationUtil observationUtil, ProductCompositeIntegration integration) {
         this.serviceUtil = serviceUtil;
+        this.observationUtil = observationUtil;
         this.integration = integration;
     }
 
     @Override
-    public Mono<Void> createCompositeProduct(ProductAggregate body) {
-        return ReactiveSecurityContextHolder.getContext().doOnSuccess(sc -> internalCreateCompositeProduct(sc, body)).then();
+    public Mono<Void> createProduct(ProductAggregate body) {
+        return observationWithProductInfo(body.getProductId(), () -> createProductInternal(body));
     }
 
-    public void internalCreateCompositeProduct(SecurityContext sc, ProductAggregate body) {
-
+    private Mono<Void> createProductInternal(ProductAggregate body) {
         try {
 
-            logAuthorizationInfo(sc);
+            List<Mono> monoList = new ArrayList<>();
 
-            LOG.debug("createCompositeProduct: creates a new composite entity for productId: {}", body.getProductId());
+            monoList.add(getLogAuthorizationInfoMono());
+
+            LOG.info("Will create a new composite entity for product.id: {}", body.getProductId());
 
             Product product = new Product(body.getProductId(), body.getName(), body.getWeight(), null);
-            integration.createProduct(product);
+            monoList.add(integration.createProduct(product));
 
             if (body.getRecommendations() != null) {
                 body.getRecommendations().forEach(r -> {
                     Recommendation recommendation = new Recommendation(body.getProductId(), r.getRecommendationId(), r.getAuthor(), r.getRate(), r.getContent(), null);
-                    integration.createRecommendation(recommendation);
+                    monoList.add(integration.createRecommendation(recommendation));
                 });
             }
 
             if (body.getReviews() != null) {
                 body.getReviews().forEach(r -> {
                     Review review = new Review(body.getProductId(), r.getReviewId(), r.getAuthor(), r.getSubject(), r.getContent(), null);
-                    integration.createReview(review);
+                    monoList.add(integration.createReview(review));
                 });
             }
 
             LOG.debug("createCompositeProduct: composite entities created for productId: {}", body.getProductId());
+
+            return Mono.zip(r -> "", monoList.toArray(new Mono[0]))
+                    .doOnError(ex -> LOG.warn("createCompositeProduct failed: {}", ex.toString()))
+                    .then();
 
         } catch (RuntimeException re) {
             LOG.warn("createCompositeProduct failed: {}", re.toString());
@@ -77,35 +93,40 @@ public class ProductCompositeServiceImpl implements ProductCompositeService {
     }
 
     @Override
-    public Mono<ProductAggregate> getCompositeProduct(int productId, int delay, int faultPercent) {
+    public Mono<ProductAggregate> getProduct(int productId, int delay, int faultPercent) {
+        return observationWithProductInfo(productId, () -> getProductInternal(productId, delay, faultPercent));
+    }
 
+    private Mono<ProductAggregate> getProductInternal(int productId, int delay, int faultPercent) {
+        LOG.info("Will get composite product info for product.id={}", productId);
         return Mono.zip(
-                values -> createProductAggregate((SecurityContext) values[0], (Product) values[1], (List<Recommendation>) values[2], (List<Review>) values[3], serviceUtil.getServiceAddress()),
-                ReactiveSecurityContextHolder.getContext().defaultIfEmpty(nullSC),
-                integration.getProduct(productId, delay, faultPercent)
-                    .onErrorReturn(CallNotPermittedException.class, getProductFallbackValue(productId)),
-                integration.getRecommendations(productId).collectList(),
-                integration.getReviews(productId).collectList())
-            .doOnError(ex -> LOG.warn("getCompositeProduct failed: {}", ex.toString()))
-            .log();
+                        values -> createProductAggregate(
+                                (SecurityContext) values[0], (Product) values[1], (List<Recommendation>) values[2], (List<Review>) values[3], serviceUtil.getServiceAddress()),
+                        getSecurityContextMono(),
+                        integration.getProduct(productId, delay, faultPercent),
+                        integration.getRecommendations(productId).collectList(),
+                        integration.getReviews(productId).collectList())
+                .doOnError(ex -> LOG.warn("getCompositeProduct failed: {}", ex.toString()))
+                .log(LOG.getName(), FINE);
     }
 
     @Override
-    public Mono<Void> deleteCompositeProduct(int productId) {
-        return ReactiveSecurityContextHolder.getContext().doOnSuccess(sc -> internalDeleteCompositeProduct(sc, productId)).then();
+    public Mono<Void> deleteProduct(int productId) {
+        return observationWithProductInfo(productId, () -> deleteProductInternal(productId));
     }
 
-    private void internalDeleteCompositeProduct(SecurityContext sc, int productId) {
+    private Mono<Void> deleteProductInternal(int productId) {
         try {
-            logAuthorizationInfo(sc);
 
-            LOG.debug("deleteCompositeProduct: Deletes a product aggregate for productId: {}", productId);
+            LOG.info("Will delete a product aggregate for product.id: {}", productId);
 
-            integration.deleteProduct(productId);
-            integration.deleteRecommendations(productId);
-            integration.deleteReviews(productId);
-
-            LOG.debug("deleteCompositeProduct: aggregate entities deleted for productId: {}", productId);
+            return Mono.zip(r -> "",
+                            getLogAuthorizationInfoMono(),
+                            integration.deleteProduct(productId),
+                            integration.deleteRecommendations(productId),
+                            integration.deleteReviews(productId))
+                    .doOnError(ex -> LOG.warn("delete failed: {}", ex.toString()))
+                    .log(LOG.getName(), FINE).then();
 
         } catch (RuntimeException re) {
             LOG.warn("deleteCompositeProduct failed: {}", re.toString());
@@ -113,20 +134,17 @@ public class ProductCompositeServiceImpl implements ProductCompositeService {
         }
     }
 
-    private Product getProductFallbackValue(int productId) {
-
-        LOG.warn("Creating a fallback product for productId = {}", productId);
-
-        if (productId == 13) {
-            String errMsg = "Product Id: " + productId + " not found in fallback cache!";
-            LOG.warn(errMsg);
-            throw new NotFoundException(errMsg);
-        }
-
-        return new Product(productId, "Fallback product" + productId, productId, serviceUtil.getServiceAddress());
+    private <T> T observationWithProductInfo(int productInfo, Supplier<T> supplier) {
+        return observationUtil.observe(
+                "composite observation",
+                "product info",
+                "productId",
+                String.valueOf(productInfo),
+                supplier);
     }
 
-    private ProductAggregate createProductAggregate(SecurityContext sc, Product product, List<Recommendation> recommendations, List<Review> reviews, String serviceAddress) {
+    private ProductAggregate createProductAggregate(
+            SecurityContext sc, Product product, List<Recommendation> recommendations, List<Review> reviews, String serviceAddress) {
 
         logAuthorizationInfo(sc);
 
@@ -137,15 +155,15 @@ public class ProductCompositeServiceImpl implements ProductCompositeService {
 
         // 2. Copy summary recommendation info, if available
         List<RecommendationSummary> recommendationSummaries = (recommendations == null) ? null :
-             recommendations.stream()
-                .map(r -> new RecommendationSummary(r.getRecommendationId(), r.getAuthor(), r.getRate(), r.getContent()))
-                .collect(Collectors.toList());
+                recommendations.stream()
+                        .map(r -> new RecommendationSummary(r.getRecommendationId(), r.getAuthor(), r.getRate(), r.getContent()))
+                        .collect(Collectors.toList());
 
         // 3. Copy summary review info, if available
         List<ReviewSummary> reviewSummaries = (reviews == null)  ? null :
-            reviews.stream()
-                .map(r -> new ReviewSummary(r.getReviewId(), r.getAuthor(), r.getSubject(), r.getContent()))
-                .collect(Collectors.toList());
+                reviews.stream()
+                        .map(r -> new ReviewSummary(r.getReviewId(), r.getAuthor(), r.getSubject(), r.getContent()))
+                        .collect(Collectors.toList());
 
         // 4. Create info regarding the involved microservices addresses
         String productAddress = product.getServiceAddress();
@@ -154,6 +172,14 @@ public class ProductCompositeServiceImpl implements ProductCompositeService {
         ServiceAddresses serviceAddresses = new ServiceAddresses(serviceAddress, productAddress, reviewAddress, recommendationAddress);
 
         return new ProductAggregate(productId, name, weight, recommendationSummaries, reviewSummaries, serviceAddresses);
+    }
+
+    private Mono<SecurityContext> getLogAuthorizationInfoMono() {
+        return getSecurityContextMono().doOnNext(sc -> logAuthorizationInfo(sc));
+    }
+
+    private Mono<SecurityContext> getSecurityContextMono() {
+        return ReactiveSecurityContextHolder.getContext().defaultIfEmpty(nullSecCtx);
     }
 
     private void logAuthorizationInfo(SecurityContext sc) {

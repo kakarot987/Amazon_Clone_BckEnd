@@ -1,8 +1,11 @@
 package amazon.api.event;
 
-import java.time.LocalDateTime;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.datatype.jsr310.ser.ZonedDateTimeSerializer;
 
-import static java.time.LocalDateTime.now;
+import java.time.ZonedDateTime;
+
+import static java.time.ZonedDateTime.now;
 
 public class Event<K, T> {
 
@@ -11,7 +14,7 @@ public class Event<K, T> {
     private Event.Type eventType;
     private K key;
     private T data;
-    private LocalDateTime eventCreatedAt;
+    private ZonedDateTime eventCreatedAt;
 
     public Event() {
         this.eventType = null;
@@ -39,7 +42,8 @@ public class Event<K, T> {
         return data;
     }
 
-    public LocalDateTime getEventCreatedAt() {
+    @JsonSerialize(using = ZonedDateTimeSerializer.class)
+    public ZonedDateTime getEventCreatedAt() {
         return eventCreatedAt;
     }
 }
