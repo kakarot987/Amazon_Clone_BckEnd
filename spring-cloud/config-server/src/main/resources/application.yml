@@ -2,34 +2,30 @@ server:
   port: 8888
 
 spring:
-  cloud:
-    config:
-      server:
-        git:
-          uri: D:\Learning\config-repo
-          cloneOnStart: true
-  security:
-    user:
-      name: root
-      password: root
-  activate:
-    on-profile: native
-# WARNING: Exposing all management endpoints over http should only be used during development, must be locked down in production!
-management:
-  endpoint:
-    health:
-      show-details: "ALWAYS"
-  endpoints:
-    web:
-      exposure:
-        include: "*"
-  security:
-    enabled: false
+  application:
+    name: config-server
+  profiles:
+    active: docker
+
+management.endpoint.health.show-details: "ALWAYS"
+management.endpoints.web.exposure.include: "*"
 
 logging:
   level:
     root: info
-
+---
+spring:
+  config:
+    activate:
+      on-profile: native
+  cloud:
+    config:
+      server:
+        git:
+          uri: https://github.com/kakarot987/config-repo.git
+          username: kakarot987
+          password: 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
+          skipSslValidation: true
 ---
 spring:
   config:
@@ -39,8 +35,7 @@ spring:
     config:
       server:
         git:
-          uri: D:\Learning\config-repo
-  security:
-    user:
-      name: root
-      password: root
+          uri: https://github.com/kakarot987/config-repo.git
+          username: kakarot987
+          password: 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
+          skipSslValidation: true

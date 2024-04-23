@@ -20,8 +20,8 @@ public class SecurityConfig {
 
     @Autowired
     public SecurityConfig(
-            @Value("${spring.security.user.name}") String username,
-            @Value("${spring.security.user.password}") String password
+            @Value("${app.eureka-username}") String username,
+            @Value("${app.eureka-username}") String password
     ) {
         this.username = username;
         this.password = password;
@@ -43,7 +43,8 @@ public class SecurityConfig {
         return  http
                 .csrf(cs -> cs.disable())
                 .authorizeRequests(auth -> auth.anyRequest().permitAll())
-                .httpBasic(Customizer.withDefaults())
+                //.httpBasic(Customizer.withDefaults())
+                .httpBasic(ht -> ht.disable())
                 .build();
     }
 }
