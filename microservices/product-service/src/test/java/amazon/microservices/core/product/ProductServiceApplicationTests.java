@@ -530,8 +530,12 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
   }
 
   private String paymentEvent(String eventId, String paymentId, String outcome) {
-    return "{\\"eventId\\":\\"" + eventId + "\\",\\"paymentId\\":\\"" + paymentId +
-        "\\",\\"outcome\\":\\"" + outcome + "\\"}";
+    try {
+      return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(
+          new amazon.api.commerce.MockPaymentEvent(eventId, paymentId, outcome));
+    } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+      throw new IllegalStateException(e);
+    }
   }
 
   private String paymentSignature(String timestamp, String payload) {
