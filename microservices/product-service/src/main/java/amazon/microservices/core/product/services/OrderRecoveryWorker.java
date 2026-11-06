@@ -59,7 +59,7 @@ public class OrderRecoveryWorker {
     }
 
     /** One bounded scan, available to integration tests and manual recovery. */
-    reactor.core.publisher.Mono<Void> recoverOnce() {
+    public reactor.core.publisher.Mono<Void> recoverOnce() {
         Instant now = Instant.now();
         return orders.findAll()
                 .filter(order -> needsReconciliation(order, now))
