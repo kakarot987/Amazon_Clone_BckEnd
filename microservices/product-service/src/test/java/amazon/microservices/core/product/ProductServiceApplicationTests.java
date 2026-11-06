@@ -4,6 +4,7 @@ import amazon.api.core.product.Product;
 import amazon.api.event.Event;
 import amazon.microservices.core.product.persistence.ProductRepository;
 import amazon.microservices.core.product.persistence.CartRepository;
+import amazon.microservices.core.product.persistence.OrderRepository;
 import amazon.api.commerce.StockAdjustment;
 import amazon.api.commerce.QuantityRequest;
 import amazon.util.exceptions.InvalidInputException;
@@ -40,6 +41,9 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
   private CartRepository cartRepository;
 
   @Autowired
+  private OrderRepository orderRepository;
+
+  @Autowired
   @Qualifier("messageProcessor")
   private Consumer<Event<Integer, Product>> messageProcessor;
 
@@ -47,6 +51,7 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
   void setupDb() {
     repository.deleteAll().block();
     cartRepository.deleteAll().block();
+    orderRepository.deleteAll().block();
   }
 
   @Test
@@ -290,6 +295,63 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
     client.post().uri("/internal/inventory/80/adjustments")
       .contentType(APPLICATION_JSON).bodyValue(new StockAdjustment(5))
       .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+  }
+
+
+  @Test
+  void checkoutIsIdempotentAndCancellationRestoresStock() {
+    Product p = new Product(91, "Headset", 1, null);
+    p.setStockQuantity(5);
+    p.setPrice(new java.math.BigDecimal("29.95"));
+    p.setCurrency("USD");
+    messageProcessor.accept(new Event<>(CREATE, 91, p));
+    client.put().uri("/internal/carts/" + CART_OWNER + "/items/91")
+      .contentType(APPLICATION_JSON).bodyValue(new QuantityRequest(2))
+      .exchange().expectStatus().isOk();
+
+    for (int i = 0; i < 2; i++) {
+      client.post().uri("/internal/orders/" + CART_OWNER)
+        .header("Idempotency-Key", "checkout-key-91")
+        .exchange().expectStatus().isOk()
+        .expectBody().jsonPath("$.status").isEqualTo("RESERVED")
+        .jsonPath("$.total").isEqualTo(59.90);
+    }
+    client.get().uri("/internal/inventory/91").exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.available").isEqualTo(3);
+    String id = orderRepository.findAll().blockFirst().getId();
+    for (int i = 0; i < 2; i++) {
+      client.post().uri("/internal/orders/" + CART_OWNER + "/" + id + "/cancel")
+        .exchange().expectStatus().isOk()
+        .expectBody().jsonPath("$.status").isEqualTo("CANCELLED");
+    }
+    client.get().uri("/internal/inventory/91").exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.available").isEqualTo(5);
+    client.get().uri("/internal/orders/" + OTHER_OWNER + "/" + id)
+      .exchange().expectStatus().isEqualTo(NOT_FOUND);
+  }
+
+  @Test
+  void checkoutRejectsOversellingAndInvalidKeys() {
+    Product p = new Product(92, "Backpack", 1, null);
+    p.setStockQuantity(1);
+    p.setPrice(new java.math.BigDecimal("10.00"));
+    p.setCurrency("USD");
+    messageProcessor.accept(new Event<>(CREATE, 92, p));
+    client.put().uri("/internal/carts/" + CART_OWNER + "/items/92")
+      .contentType(APPLICATION_JSON).bodyValue(new QuantityRequest(1))
+      .exchange().expectStatus().isOk();
+
+    client.post().uri("/internal/orders/" + CART_OWNER)
+      .header("Idempotency-Key", "checkout-key-a")
+      .exchange().expectStatus().isOk();
+    client.post().uri("/internal/orders/" + CART_OWNER)
+      .header("Idempotency-Key", "checkout-key-b")
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.post().uri("/internal/orders/" + CART_OWNER)
+      .header("Idempotency-Key", "x")
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.get().uri("/internal/inventory/92").exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.available").isEqualTo(0);
   }
 
   private void sendCreateProductEvent(int productId) {

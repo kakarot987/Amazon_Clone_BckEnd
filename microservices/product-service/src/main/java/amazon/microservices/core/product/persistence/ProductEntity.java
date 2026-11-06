@@ -29,6 +29,8 @@ public class ProductEntity {
     private BigDecimal price;
     private String currency;
     private Integer stockQuantity;
+    // Reserving tokens live alongside stock for a single-document atomic update.
+    private List<String> reservedOrderIds;
     private List<String> imageUrls;
 
     public ProductEntity() {
@@ -72,6 +74,8 @@ public class ProductEntity {
     public String getCurrency() { return currency; }
     public Integer getStockQuantity() { return stockQuantity; }
     public List<String> getImageUrls() { return imageUrls; }
+    public List<String> getReservedOrderIds() { return reservedOrderIds; }
+    public void setReservedOrderIds(List<String> reservedOrderIds) { this.reservedOrderIds = reservedOrderIds; }
     public void setSku(String sku) { this.sku = sku; }
     public void setDescription(String description) { this.description = description; }
     public void setCategory(String category) { this.category = category; }

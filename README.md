@@ -137,3 +137,50 @@ This phase does not implement user registration, order placement, checkout,
 payments, reservation expiration or stock ledger/idempotency. Before
 production, create a dedicated inventory/order flow with reservation IDs,
 expiry, and audit records. Full Gradle/Docker tests are still required.
+
+## Orders and checkout foundations (Phase 1, draft)
+
+This milestone provides **single-product** order intents with atomic stock
+reservation, idempotency and cancellation. **No payments are charged** and
+there is no fulfillment/shipping process.
+
+A signed-in user token is required: `order:read` for reads and
+`order:write` for creating or cancelling a reservation. App-only
+client-credentials tokens cannot operate on customer orders.
+
+```http
+POST /product-composite/orders
+Idempotency-Key: checkout-attempt-12345
+
+GET /product-composite/orders/{orderId}
+POST /product-composite/orders/{orderId}/cancel
+```
+
+Checkout uses the **current saved cart**, and currently requires exactly
+one item. Price/currency are always re-read from product data rather than
+trusted from the cart display snapshot. Each new checkout returns an
+order receipt with the total, currency, reserved product/quantity, and
+status. Use a new idempotency key for each distinct checkout attempt;
+reusing a key returns the original order, even if the cart has changed.
+
+Statuses: `PENDING` (order intent saved; stock reservation not finalized),
+`RESERVED` (stock reserved, **not paid**),
+`CANCELLATION_PENDING` (release in progress), `CANCELLED` (released).
+Repeat the original checkout request with the same key if it stalls in
+`PENDING`; repeat cancellation if it stalls in
+`CANCELLATION_PENDING`. Recovery automation is not implemented.
+
+The MongoDB reservation uses one atomic document update that decrements
+available stock **and** records the order ID in `reservedOrderIds`.
+Repeated operations cannot decrement/release the same reservation twice.
+The order record and product stock are in separate documents, so a crash
+between them can leave a pending operation that must be retried/reconciled.
+This is intentionally not a complete transactional checkout implementation.
+
+Current restrictions: No multi-product checkout, expiry, automatic
+recovery worker, delivery, tax/shipping calculation, payment integration,
+refunds, completed orders, or reservation audit ledger. Products with
+active reservations cannot be edited or deleted using the existing
+catalog API. Existing products must have stock and price configured
+to be eligible. Do not treat this as production checkout without
+end-to-end tests, operation monitoring and a reconciliation process.
