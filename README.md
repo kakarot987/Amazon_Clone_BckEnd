@@ -222,3 +222,94 @@ cannot reserve stock continue to require investigation. Before any
 real payment integration, add distributed worker coordination and
 stress-test conflicting orders, cancellations, inventory edits and
 process crashes.
+
+## Mock payments — full simulation phase (draft)
+
+This phase adds an **end-to-end simulated payment workflow**, including
+initiation, an HMAC-signed provider callback, durable order/payment state,
+idempotent callback retries, failed-payment stock release, and recovery.
+**No real payment credentials, cards, bank accounts, charges, refunds, or
+payment provider integrations are involved.**
+
+### Configure
+
+Generate a unique development-only signing key:
+
+```sh
+python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
+```
+
+Put it in your ignored `.env` as `MOCK_PAYMENT_WEBHOOK_SECRET`.
+Do not commit it or reuse it as a live provider key. The product-service
+container receives this secret; the gateway/composite do not. Webhook
+verification fails closed if the key is absent or a placeholder.
+
+### End-to-end local simulation
+
+1. Create a product with nonzero available stock and a price/currency.
+2. Add exactly one item to a signed-in customer's cart.
+3. Create a reserved order:
+
+```http
+POST /product-composite/orders
+Authorization: Bearer <signed-in-user-order-write-token>
+Idempotency-Key: checkout-unique-request-1234
+```
+
+4. Use the resulting 64-character `orderId` to initialize the payment
+   intent (same `order:write` scope):
+
+```http
+POST /product-composite/payments/orders/{orderId}/intent
+Authorization: Bearer <signed-in-user-order-write-token>
+```
+
+   This returns a `PaymentIntent` with `paymentId` equal to
+   `orderId`, the authoritative total/currency, state and expiry.
+   Repeating initiation returns the same intent.
+5. Export the **same** mock signing key used by product-service, then
+   simulate success or decline:
+
+```sh
+export MOCK_PAYMENT_WEBHOOK_SECRET='<your-development-mock-key>'
+python3 scripts/send-mock-payment.py --payment-id '<order-id>' --outcome SUCCEEDED
+# Or create a fresh order and send --outcome DECLINED
+```
+
+6. Read order status with `GET /product-composite/orders/{orderId}`
+   using an `order:read` user token.
+
+The simulator calls `POST /product-composite/payments/mock-webhook`
+with the JSON bytes, `X-Mock-Timestamp` (Unix epoch seconds), and
+`X-Mock-Signature` (lowercase hex HMAC-SHA256 of
+`<timestamp>.<exact raw JSON body>`). The webhook is publicly reachable
+on the development gateway but **requires a valid HMAC**. Missing or
+invalid signatures and timestamps outside a 5-minute skew window are
+rejected. To test duplicate delivery, pass the same `--event-id`
+and repeat the command.
+
+### Payment states and reservation guarantees
+
+- `PAYMENT_PENDING`: mock payment initiated; stock remains reserved.
+- `PAYMENT_CONFIRMING`: signed simulated success accepted; finalization
+  removes the reservation token *without* increasing available stock.
+- `MOCK_PAID`: terminal simulated success (**not a real payment**).
+- `PAYMENT_FAILED_PENDING`: signed mock decline accepted; release in progress.
+- `PAYMENT_FAILED`: terminal decline; held stock restored once.
+- `EXPIRED` / `CANCELLED`: previously reserved stock restored.
+  Late mock-success callbacks are rejected, not converted to paid orders.
+
+The recovery worker retries interrupted confirmation/release and expires
+`PAYMENT_PENDING` intents if the underlying reservation TTL passes.
+The first valid signed outcome wins; further conflicting events are
+rejected. Replays of the same signed event are idempotent while within
+the allowed timestamp window.
+
+**Limitations:** The mock provider script intentionally controls the
+outcome; it is **not** payment authorization. The payment state is
+embedded in the order document; there is no external provider ledger,
+immutable webhook event archive, reconciliation with a real processor,
+refund/capture API, settlement, chargebacks, or multi-item checkout.
+Order and stock records remain separate Mongo documents with best-effort
+recovery. Real payment integration requires audited provider reconciliation,
+an outbox, idempotency storage and stronger transactional guarantees.
