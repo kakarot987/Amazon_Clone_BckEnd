@@ -1,0 +1,44 @@
+package amazon.microservices.core.product.services;
+
+import amazon.microservices.core.product.persistence.OrderEntity;
+import org.junit.jupiter.api.Test;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+class OrderRecoveryWorkerTests {
+    private OrderEntity order(String state, Instant expiry) {
+        OrderEntity order = new OrderEntity("order-1", "owner-1", 12, 2,
+                "Product", new BigDecimal("19.99"), "USD", expiry);
+        order.setStatus(state);
+        return order;
+    }
+
+    @Test
+    void unfinishedStatesAreAlwaysReconciled() {
+        Instant now = Instant.parse("2026-11-06T16:00:00Z");
+        assertTrue(OrderRecoveryWorker.needsReconciliation(
+                order(OrderEntity.PENDING, now.plusSeconds(60)), now));
+        assertTrue(OrderRecoveryWorker.needsReconciliation(
+                order(OrderEntity.CANCELLATION_PENDING, now.plusSeconds(60)), now));
+        assertTrue(OrderRecoveryWorker.needsReconciliation(
+                order(OrderEntity.EXPIRATION_PENDING, now.plusSeconds(60)), now));
+    }
+
+    @Test
+    void onlyExpiredReservationsTriggerRelease() {
+        Instant now = Instant.parse("2026-11-06T16:00:00Z");
+        assertFalse(OrderRecoveryWorker.needsReconciliation(
+                order(OrderEntity.RESERVED, now.plusSeconds(1)), now));
+        assertTrue(OrderRecoveryWorker.needsReconciliation(
+                order(OrderEntity.RESERVED, now), now));
+        assertTrue(OrderRecoveryWorker.needsReconciliation(
+                order(OrderEntity.RESERVED, now.minusSeconds(1)), now));
+        assertFalse(OrderRecoveryWorker.needsReconciliation(
+                order(OrderEntity.EXPIRED, now.minusSeconds(1)), now));
+        assertFalse(OrderRecoveryWorker.needsReconciliation(
+                order(OrderEntity.CANCELLED, now.minusSeconds(1)), now));
+    }
+}
