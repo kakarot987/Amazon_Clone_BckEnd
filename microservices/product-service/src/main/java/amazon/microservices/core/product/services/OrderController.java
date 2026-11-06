@@ -255,7 +255,11 @@ public class OrderController {
                 .onErrorResume(OptimisticLockingFailureException.class,
                         error -> orders.findById(order.getId()))
                 .flatMap(current -> {
-                    if (!event.getEventId().equals(current.getPaymentEventId()))
+                    if (!event.getEventId().equals(current.getPaymentEventId())
+                            || ("SUCCEEDED".equals(event.getOutcome())
+                                && !("SUCCEEDED".equals(current.getPaymentStatus())))
+                            || ("DECLINED".equals(event.getOutcome())
+                                && !("DECLINED".equals(current.getPaymentStatus()))))
                         return Mono.error(new InvalidInputException("Conflicting payment callback"));
                     return settlePayment(current);
                 });
