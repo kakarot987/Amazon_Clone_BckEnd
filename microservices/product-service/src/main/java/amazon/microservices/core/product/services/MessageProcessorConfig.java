@@ -18,10 +18,12 @@ public class MessageProcessorConfig {
     private static final Logger LOG = LoggerFactory.getLogger(MessageProcessorConfig.class);
 
     private final ProductService productService;
+    private final ProductCatalogOperations productCatalogOperations;
 
     @Autowired
-    public MessageProcessorConfig(ProductService productService) {
+    public MessageProcessorConfig(ProductService productService, ProductCatalogOperations productCatalogOperations) {
         this.productService = productService;
+        this.productCatalogOperations = productCatalogOperations;
     }
 
     @Bean
@@ -42,7 +44,7 @@ public class MessageProcessorConfig {
                     if (update == null || update.getProductId() != event.getKey()) {
                         throw new EventProcessingException("Invalid UPDATE event for product");
                     }
-                    ((ProductCatalogOperations) productService).updateProduct(update.getProductId(), update).block();
+                    productCatalogOperations.updateProduct(update.getProductId(), update).block();
                     break;
 
                 case DELETE:

@@ -24,6 +24,7 @@ public class SecurityConfig {
 						.pathMatchers("/actuator/**").permitAll()
 						.pathMatchers(POST, "/product-composite/**").hasAuthority("SCOPE_product:write")
 						.pathMatchers(DELETE, "/product-composite/**").hasAuthority("SCOPE_product:write")
+                        .pathMatchers(PUT, "/product-composite/**").hasAuthority("SCOPE_product:write")
 						.pathMatchers(GET, "/product-composite/**").hasAuthority("SCOPE_product:read")
 						.anyExchange().authenticated()
 				)
