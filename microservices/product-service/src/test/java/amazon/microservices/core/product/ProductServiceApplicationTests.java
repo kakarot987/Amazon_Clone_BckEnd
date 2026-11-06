@@ -20,6 +20,11 @@ import org.springframework.http.HttpStatus;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
 import java.util.function.Consumer;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.util.HexFormat;
 
 import static amazon.api.event.Event.Type.CREATE;
 import static amazon.api.event.Event.Type.DELETE;
@@ -31,6 +36,7 @@ import static org.springframework.http.MediaType.APPLICATION_JSON;
 
 @SpringBootTest(webEnvironment = RANDOM_PORT, properties = {
   "app.orders.recovery-interval=PT1H",
+  "MOCK_PAYMENT_WEBHOOK_SECRET=mock-test-signing-secret-with-more-than-32-characters",
   "eureka.client.enabled=false",
   "spring.cloud.config.enabled=false","spring.main.allow-bean-definition-overriding=true","spring.cloud.compatibility-verifier.enabled=false"})
 class ProductServiceApplicationTests extends MongoDbTestBase {
@@ -421,6 +427,196 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
     recoveryWorker.recoverOnce().block();
     assertEquals(OrderEntity.CANCELLED, orderRepository.findById(order.getId()).block().getStatus());
     assertEquals(3, repository.findByProductId(96).block().getStockQuantity());
+  }
+
+
+  @Test
+  void signedMockSuccessIsIdempotentAndCannotBeCancelledOrExpired() {
+    Product p = new Product(151, "Mock payment headset", 1, null);
+    p.setStockQuantity(5);
+    p.setPrice(new java.math.BigDecimal("35.00"));
+    p.setCurrency("USD");
+    messageProcessor.accept(new Event<>(CREATE, 151, p));
+    client.put().uri("/internal/carts/" + CART_OWNER + "/items/151")
+      .contentType(APPLICATION_JSON).bodyValue(new QuantityRequest(2))
+      .exchange().expectStatus().isOk();
+    client.post().uri("/internal/orders/" + CART_OWNER)
+      .header("Idempotency-Key", "payment-success-key-151")
+      .exchange().expectStatus().isOk();
+    String id = orderRepository.findAll().blockFirst().getId();
+
+    client.post().uri("/internal/orders/" + CART_OWNER + "/" + id + "/payment")
+      .exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.status").isEqualTo("PENDING")
+      .jsonPath("$.amount").isEqualTo(70.0);
+    client.post().uri("/internal/orders/" + CART_OWNER + "/" + id + "/payment")
+      .exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.paymentId").isEqualTo(id);
+
+    String payload = paymentEvent("event-success-151", id, "SUCCEEDED");
+    for (int i = 0; i < 2; i++) {
+      sendSignedPaymentEvent(payload).expectStatus().isOk()
+        .expectBody().jsonPath("$.status").isEqualTo("MOCK_PAID")
+        .jsonPath("$.paymentStatus").isEqualTo("SUCCEEDED");
+    }
+    assertEquals(3, repository.findByProductId(151).block().getStockQuantity());
+    var product = repository.findByProductId(151).block();
+    assertTrue(product.getReservedOrderIds() == null || product.getReservedOrderIds().isEmpty());
+
+    sendSignedPaymentEvent(paymentEvent("event-other-151", id, "DECLINED"))
+      .expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.post().uri("/internal/orders/" + CART_OWNER + "/" + id + "/cancel")
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+
+    var paid = orderRepository.findById(id).block();
+    paid.setExpiresAt(Instant.now().minusSeconds(1));
+    orderRepository.save(paid).block();
+    recoveryWorker.recoverOnce().block();
+    assertEquals("MOCK_PAID", orderRepository.findById(id).block().getStatus());
+    assertEquals(3, repository.findByProductId(151).block().getStockQuantity());
+  }
+
+  @Test
+  void signedMockDeclineReleasesStockOnce() {
+    Product p = new Product(152, "Payment test chair", 2, null);
+    p.setStockQuantity(2);
+    p.setPrice(new java.math.BigDecimal("15.00"));
+    p.setCurrency("USD");
+    messageProcessor.accept(new Event<>(CREATE, 152, p));
+    client.put().uri("/internal/carts/" + CART_OWNER + "/items/152")
+      .contentType(APPLICATION_JSON).bodyValue(new QuantityRequest(1))
+      .exchange().expectStatus().isOk();
+    client.post().uri("/internal/orders/" + CART_OWNER)
+      .header("Idempotency-Key", "payment-decline-key-152")
+      .exchange().expectStatus().isOk();
+    String id = orderRepository.findAll().blockFirst().getId();
+    client.post().uri("/internal/orders/" + CART_OWNER + "/" + id + "/payment")
+      .exchange().expectStatus().isOk();
+
+    String event = paymentEvent("event-decline-152", id, "DECLINED");
+    for (int i = 0; i < 2; i++) {
+      sendSignedPaymentEvent(event).expectStatus().isOk()
+        .expectBody().jsonPath("$.status").isEqualTo("PAYMENT_FAILED")
+        .jsonPath("$.paymentStatus").isEqualTo("DECLINED");
+    }
+    assertEquals(2, repository.findByProductId(152).block().getStockQuantity());
+    assertTrue(repository.findByProductId(152).block().getReservedOrderIds().isEmpty());
+    recoveryWorker.recoverOnce().block();
+    assertEquals(2, repository.findByProductId(152).block().getStockQuantity());
+    sendSignedPaymentEvent(paymentEvent("event-another-152", id, "SUCCEEDED"))
+      .expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+  }
+
+  @Test
+  void mockWebhookRejectsTamperedPayloadAndOldTimestamps() {
+    String id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    String body = paymentEvent("event-tampered-155", id, "SUCCEEDED");
+    String timestamp = Long.toString(Instant.now().getEpochSecond());
+    String sig = paymentSignature(timestamp, body);
+
+    client.post().uri("/internal/mock-payments/webhook")
+      .header("X-Mock-Timestamp", timestamp)
+      .header("X-Mock-Signature", sig)
+      .contentType(APPLICATION_JSON)
+      .bodyValue(body.replace("SUCCEEDED", "DECLINED").getBytes(StandardCharsets.UTF_8))
+      .exchange().expectStatus().isUnauthorized();
+
+    String oldTimestamp = Long.toString(Instant.now().minusSeconds(400).getEpochSecond());
+    client.post().uri("/internal/mock-payments/webhook")
+      .header("X-Mock-Timestamp", oldTimestamp)
+      .header("X-Mock-Signature", paymentSignature(oldTimestamp, body))
+      .contentType(APPLICATION_JSON).bodyValue(body.getBytes(StandardCharsets.UTF_8))
+      .exchange().expectStatus().isUnauthorized();
+  }
+
+
+  @Test
+  void lateSignedSuccessIsRejectedAfterReservationExpiry() {
+    Product p = new Product(153, "Wireless mouse", 1, null);
+    p.setStockQuantity(1);
+    p.setPrice(new java.math.BigDecimal("15.00"));
+    p.setCurrency("USD");
+    messageProcessor.accept(new Event<>(CREATE, 153, p));
+    client.put().uri("/internal/carts/" + CART_OWNER + "/items/153")
+      .contentType(APPLICATION_JSON).bodyValue(new QuantityRequest(1))
+      .exchange().expectStatus().isOk();
+    client.post().uri("/internal/orders/" + CART_OWNER)
+      .header("Idempotency-Key", "late-success-key-153")
+      .exchange().expectStatus().isOk();
+    String id = orderRepository.findAll().blockFirst().getId();
+    client.post().uri("/internal/orders/" + CART_OWNER + "/" + id + "/payment")
+      .exchange().expectStatus().isOk();
+
+    var pending = orderRepository.findById(id).block();
+    pending.setExpiresAt(Instant.now().minusSeconds(2));
+    orderRepository.save(pending).block();
+
+    sendSignedPaymentEvent(paymentEvent("late-success-event-153", id, "SUCCEEDED"))
+      .expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    recoveryWorker.recoverOnce().block();
+    assertEquals("EXPIRED", orderRepository.findById(id).block().getStatus());
+    assertEquals(1, repository.findByProductId(153).block().getStockQuantity());
+  }
+
+  @Test
+  void workerFinishesInterruptedPaymentConfirmation() {
+    Product p = new Product(154, "Tablet stand", 1, null);
+    p.setStockQuantity(3);
+    p.setPrice(new java.math.BigDecimal("8.00"));
+    p.setCurrency("USD");
+    messageProcessor.accept(new Event<>(CREATE, 154, p));
+    client.put().uri("/internal/carts/" + CART_OWNER + "/items/154")
+      .contentType(APPLICATION_JSON).bodyValue(new QuantityRequest(2))
+      .exchange().expectStatus().isOk();
+    client.post().uri("/internal/orders/" + CART_OWNER)
+      .header("Idempotency-Key", "recovery-success-key-154")
+      .exchange().expectStatus().isOk();
+    String id = orderRepository.findAll().blockFirst().getId();
+    client.post().uri("/internal/orders/" + CART_OWNER + "/" + id + "/payment")
+      .exchange().expectStatus().isOk();
+    var pending = orderRepository.findById(id).block();
+    pending.setStatus("PAYMENT_CONFIRMING");
+    pending.setPaymentStatus("SUCCEEDED");
+    pending.setPaymentEventId("recovery-event-154");
+    orderRepository.save(pending).block();
+
+    recoveryWorker.recoverOnce().block();
+    assertEquals("MOCK_PAID", orderRepository.findById(id).block().getStatus());
+    assertEquals(1, repository.findByProductId(154).block().getStockQuantity());
+    assertTrue(repository.findByProductId(154).block().getReservedOrderIds().isEmpty());
+    recoveryWorker.recoverOnce().block();
+    assertEquals(1, repository.findByProductId(154).block().getStockQuantity());
+  }
+
+  private String paymentEvent(String eventId, String paymentId, String outcome) {
+    try {
+      return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(
+          new amazon.api.commerce.MockPaymentEvent(eventId, paymentId, outcome));
+    } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  private String paymentSignature(String timestamp, String payload) {
+    try {
+      Mac mac = Mac.getInstance("HmacSHA256");
+      mac.init(new SecretKeySpec(
+          "mock-test-signing-secret-with-more-than-32-characters".getBytes(StandardCharsets.UTF_8),
+          "HmacSHA256"));
+      return HexFormat.of().formatHex(mac.doFinal((timestamp + "." + payload)
+          .getBytes(StandardCharsets.UTF_8)));
+    } catch (Exception e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  private WebTestClient.ResponseSpec sendSignedPaymentEvent(String body) {
+    String timestamp = Long.toString(Instant.now().getEpochSecond());
+    return client.post().uri("/internal/mock-payments/webhook")
+      .header("X-Mock-Timestamp", timestamp)
+      .header("X-Mock-Signature", paymentSignature(timestamp, body))
+      .contentType(APPLICATION_JSON).bodyValue(body.getBytes(StandardCharsets.UTF_8))
+      .exchange();
   }
 
   private void sendCreateProductEvent(int productId) {

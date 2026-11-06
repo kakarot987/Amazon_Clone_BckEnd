@@ -16,6 +16,11 @@ public class OrderEntity {
     public static final String CANCELLED = "CANCELLED";
     public static final String EXPIRATION_PENDING = "EXPIRATION_PENDING";
     public static final String EXPIRED = "EXPIRED";
+    public static final String PAYMENT_PENDING = "PAYMENT_PENDING";
+    public static final String PAYMENT_CONFIRMING = "PAYMENT_CONFIRMING";
+    public static final String MOCK_PAID = "MOCK_PAID";
+    public static final String PAYMENT_FAILED_PENDING = "PAYMENT_FAILED_PENDING";
+    public static final String PAYMENT_FAILED = "PAYMENT_FAILED";
     @Id private String id;
     @Version private Long version;
     private String ownerKey;
@@ -27,6 +32,11 @@ public class OrderEntity {
     private String status;
     private Instant createdAt;
     private Instant expiresAt;
+    // The order document is the authoritative mock-payment attempt record.
+    private String paymentStatus;
+    private String paymentEventId;
+    private Instant paymentStartedAt;
+    private Instant mockPaidAt;
     public OrderEntity() {}
     public OrderEntity(String id, String ownerKey, int productId, int quantity,
                        String name, BigDecimal price, String currency) {
@@ -56,6 +66,10 @@ public class OrderEntity {
     public String getCurrency() { return currency; }
     public String getStatus() { return status; }
     public Instant getCreatedAt() { return createdAt; }
+    public String getPaymentStatus() { return paymentStatus; }
+    public String getPaymentEventId() { return paymentEventId; }
+    public Instant getPaymentStartedAt() { return paymentStartedAt; }
+    public Instant getMockPaidAt() { return mockPaidAt; }
     // Existing orders without an expiry retain the documented 15-minute TTL.
     public Instant getExpiresAt() {
         return expiresAt != null ? expiresAt
@@ -71,5 +85,9 @@ public class OrderEntity {
     public void setCurrency(String currency) { this.currency = currency; }
     public void setStatus(String status) { this.status = status; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
+    public void setPaymentStatus(String paymentStatus) { this.paymentStatus = paymentStatus; }
+    public void setPaymentEventId(String paymentEventId) { this.paymentEventId = paymentEventId; }
+    public void setPaymentStartedAt(Instant paymentStartedAt) { this.paymentStartedAt = paymentStartedAt; }
+    public void setMockPaidAt(Instant mockPaidAt) { this.mockPaidAt = mockPaidAt; }
     public void setExpiresAt(Instant expiresAt) { this.expiresAt = expiresAt; }
 }

@@ -81,6 +81,7 @@ services:
       <<: *service-env
       SERVER_PORT: 8080
       SPRING_DATA_MONGODB_HOST: mongodb
+      MOCK_PAYMENT_WEBHOOK_SECRET: ${MOCK_PAYMENT_WEBHOOK_SECRET:?Set MOCK_PAYMENT_WEBHOOK_SECRET in .env}
     depends_on: [config-server, mongodb, rabbitmq, eureka]
 
   recommendation:

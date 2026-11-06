@@ -1,0 +1,34 @@
+name: Java 17 build and tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+      - name: Run Gradle checks (including Testcontainers)
+        run: ./gradlew clean build --stacktrace
+      - name: Upload test failure reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-test-reports
+          path: |
+            **/build/test-results/test/**
+            **/build/reports/tests/**
+          if-no-files-found: ignore
