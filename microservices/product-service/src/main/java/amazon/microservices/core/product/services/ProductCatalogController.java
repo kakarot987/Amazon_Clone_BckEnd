@@ -86,6 +86,11 @@ public class ProductCatalogController implements ProductCatalogOperations {
         return repository.findByProductId(productId)
                 .switchIfEmpty(Mono.error(new NotFoundException("No product found for productId: " + productId)))
                 .flatMap(existing -> {
+                    // A stale catalog write must not erase live reservations.
+                    if (existing.getReservedOrderIds() != null && !existing.getReservedOrderIds().isEmpty()) {
+                        return Mono.error(new InvalidInputException(
+                                "Cannot update a product with active order reservations"));
+                    }
                     existing.setName(product.getName());
                     existing.setWeight(product.getWeight());
                     existing.setSku(product.getSku());
