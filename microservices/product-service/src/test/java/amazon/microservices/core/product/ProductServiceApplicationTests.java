@@ -5,6 +5,9 @@ import amazon.api.event.Event;
 import amazon.microservices.core.product.persistence.ProductRepository;
 import amazon.microservices.core.product.persistence.CartRepository;
 import amazon.microservices.core.product.persistence.OrderRepository;
+import amazon.microservices.core.product.persistence.OrderEntity;
+import amazon.microservices.core.product.services.OrderRecoveryWorker;
+import java.time.Instant;
 import amazon.api.commerce.StockAdjustment;
 import amazon.api.commerce.QuantityRequest;
 import amazon.util.exceptions.InvalidInputException;
@@ -27,6 +30,7 @@ import static org.springframework.http.HttpStatus.*;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 
 @SpringBootTest(webEnvironment = RANDOM_PORT, properties = {
+  "app.orders.recovery-interval=PT1H",
   "eureka.client.enabled=false",
   "spring.cloud.config.enabled=false","spring.main.allow-bean-definition-overriding=true","spring.cloud.compatibility-verifier.enabled=false"})
 class ProductServiceApplicationTests extends MongoDbTestBase {
@@ -42,6 +46,9 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
 
   @Autowired
   private OrderRepository orderRepository;
+
+  @Autowired
+  private OrderRecoveryWorker recoveryWorker;
 
   @Autowired
   @Qualifier("messageProcessor")
@@ -352,6 +359,68 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
       .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
     client.get().uri("/internal/inventory/92").exchange().expectStatus().isOk()
       .expectBody().jsonPath("$.available").isEqualTo(0);
+  }
+
+
+  @Test
+  void expiredReservationIsReleasedOnce() {
+    Product p = new Product(95, "Portable speaker", 1, null);
+    p.setStockQuantity(4);
+    p.setPrice(new java.math.BigDecimal("39.00"));
+    p.setCurrency("USD");
+    messageProcessor.accept(new Event<>(CREATE, 95, p));
+    client.put().uri("/internal/carts/" + CART_OWNER + "/items/95")
+      .contentType(APPLICATION_JSON).bodyValue(new QuantityRequest(2))
+      .exchange().expectStatus().isOk();
+    client.post().uri("/internal/orders/" + CART_OWNER)
+      .header("Idempotency-Key", "expire-speaker-95")
+      .exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.status").isEqualTo("RESERVED");
+
+    OrderEntity order = orderRepository.findAll().blockFirst();
+    assertNotNull(order);
+    assertNotNull(order.getExpiresAt());
+    order.setExpiresAt(Instant.now().minusSeconds(1));
+    orderRepository.save(order).block();
+
+    recoveryWorker.recoverOnce().block();
+    assertEquals(OrderEntity.EXPIRED, orderRepository.findById(order.getId()).block().getStatus());
+    assertEquals(4, repository.findByProductId(95).block().getStockQuantity());
+
+    recoveryWorker.recoverOnce().block();
+    assertEquals(4, repository.findByProductId(95).block().getStockQuantity());
+    client.get().uri("/internal/orders/" + CART_OWNER + "/" + order.getId())
+      .exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.status").isEqualTo("EXPIRED");
+  }
+
+  @Test
+  void interruptedReservationAndCancellationAreRecovered() {
+    Product p = new Product(96, "Notebook", 1, null);
+    p.setStockQuantity(3);
+    p.setPrice(new java.math.BigDecimal("5.00"));
+    p.setCurrency("USD");
+    messageProcessor.accept(new Event<>(CREATE, 96, p));
+    client.put().uri("/internal/carts/" + CART_OWNER + "/items/96")
+      .contentType(APPLICATION_JSON).bodyValue(new QuantityRequest(1))
+      .exchange().expectStatus().isOk();
+    client.post().uri("/internal/orders/" + CART_OWNER)
+      .header("Idempotency-Key", "recover-notebook-96")
+      .exchange().expectStatus().isOk();
+
+    OrderEntity order = orderRepository.findAll().blockFirst();
+    order.setStatus(OrderEntity.PENDING);
+    orderRepository.save(order).block();
+    recoveryWorker.recoverOnce().block();
+    assertEquals(OrderEntity.RESERVED, orderRepository.findById(order.getId()).block().getStatus());
+    assertEquals(2, repository.findByProductId(96).block().getStockQuantity());
+
+    order = orderRepository.findById(order.getId()).block();
+    order.setStatus(OrderEntity.CANCELLATION_PENDING);
+    orderRepository.save(order).block();
+    recoveryWorker.recoverOnce().block();
+    assertEquals(OrderEntity.CANCELLED, orderRepository.findById(order.getId()).block().getStatus());
+    assertEquals(3, repository.findByProductId(96).block().getStockQuantity());
   }
 
   private void sendCreateProductEvent(int productId) {
