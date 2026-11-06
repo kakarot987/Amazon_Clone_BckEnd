@@ -28,6 +28,23 @@ class OrderRecoveryWorkerTests {
     }
 
     @Test
+    void reconcilesInterruptedPaymentSettlementsAndPaymentTimeout() {
+        Instant now = Instant.parse("2026-11-06T16:00:00Z");
+        assertTrue(OrderRecoveryWorker.needsReconciliation(
+                order(OrderEntity.PAYMENT_CONFIRMING, now.plusSeconds(90)), now));
+        assertTrue(OrderRecoveryWorker.needsReconciliation(
+                order(OrderEntity.PAYMENT_FAILED_PENDING, now.plusSeconds(90)), now));
+        assertTrue(OrderRecoveryWorker.needsReconciliation(
+                order(OrderEntity.PAYMENT_PENDING, now.minusSeconds(1)), now));
+        assertFalse(OrderRecoveryWorker.needsReconciliation(
+                order(OrderEntity.PAYMENT_PENDING, now.plusSeconds(5)), now));
+        assertFalse(OrderRecoveryWorker.needsReconciliation(
+                order(OrderEntity.MOCK_PAID, now.minusSeconds(5)), now));
+        assertFalse(OrderRecoveryWorker.needsReconciliation(
+                order(OrderEntity.PAYMENT_FAILED, now.minusSeconds(5)), now));
+    }
+
+    @Test
     void onlyExpiredReservationsTriggerRelease() {
         Instant now = Instant.parse("2026-11-06T16:00:00Z");
         assertFalse(OrderRecoveryWorker.needsReconciliation(
