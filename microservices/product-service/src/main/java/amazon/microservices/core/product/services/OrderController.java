@@ -2,6 +2,8 @@ package amazon.microservices.core.product.services;
 
 import amazon.api.commerce.CartItem;
 import amazon.api.commerce.OrderReceipt;
+import amazon.api.commerce.PaymentIntent;
+import amazon.api.commerce.MockPaymentEvent;
 import amazon.microservices.core.product.persistence.CartRepository;
 import amazon.microservices.core.product.persistence.OrderEntity;
 import amazon.microservices.core.product.persistence.OrderRepository;
@@ -83,10 +85,12 @@ public class OrderController {
                     || OrderEntity.EXPIRED.equals(order.getStatus()))
                 return Mono.just(receipt(order));
             if (OrderEntity.CANCELLATION_PENDING.equals(order.getStatus())
-                    || OrderEntity.EXPIRATION_PENDING.equals(order.getStatus()))
+                    || OrderEntity.EXPIRATION_PENDING.equals(order.getStatus())
+                    || OrderEntity.PAYMENT_FAILED_PENDING.equals(order.getStatus()))
                 return finishCancellation(order);
-            if (!OrderEntity.RESERVED.equals(order.getStatus()))
-                return Mono.error(new InvalidInputException("Only reserved orders may be cancelled"));
+            if (!OrderEntity.RESERVED.equals(order.getStatus())
+                    && !OrderEntity.PAYMENT_PENDING.equals(order.getStatus()))
+                return Mono.error(new InvalidInputException("Paid or non-reserved orders cannot be cancelled"));
             order.setStatus(OrderEntity.CANCELLATION_PENDING);
             return orders.save(order)
                     .onErrorResume(OptimisticLockingFailureException.class,
@@ -165,11 +169,152 @@ public class OrderController {
                 });
     }
 
+
+    /** One mock-payment intent per reserved order, not a real payment charge. */
+    @PostMapping("/{ownerKey}/{orderId}/payment")
+    public Mono<PaymentIntent> startMockPayment(@PathVariable String ownerKey,
+                                                @PathVariable String orderId) {
+        validateOwner(ownerKey);
+        validateOrderId(orderId);
+        return ownedOrder(ownerKey, orderId).flatMap(this::startPayment);
+    }
+
+    private Mono<PaymentIntent> startPayment(OrderEntity order) {
+        if (OrderEntity.PAYMENT_PENDING.equals(order.getStatus())
+                || OrderEntity.PAYMENT_CONFIRMING.equals(order.getStatus())
+                || OrderEntity.MOCK_PAID.equals(order.getStatus()))
+            return Mono.just(toPaymentIntent(order));
+        if (!OrderEntity.RESERVED.equals(order.getStatus()))
+            return Mono.error(new InvalidInputException("Only an active reserved order can start mock payment"));
+        if (order.getExpiresAt() == null || !order.getExpiresAt().isAfter(Instant.now()))
+            return Mono.error(new InvalidInputException("Order reservation has expired"));
+        order.setStatus(OrderEntity.PAYMENT_PENDING);
+        order.setPaymentStatus("PENDING");
+        order.setPaymentStartedAt(Instant.now());
+        return orders.save(order)
+                .onErrorResume(OptimisticLockingFailureException.class,
+                        error -> orders.findById(order.getId()))
+                .flatMap(current -> {
+                    if (OrderEntity.PAYMENT_PENDING.equals(current.getStatus())
+                            || OrderEntity.PAYMENT_CONFIRMING.equals(current.getStatus())
+                            || OrderEntity.MOCK_PAID.equals(current.getStatus()))
+                        return Mono.just(toPaymentIntent(current));
+                    return Mono.error(new InvalidInputException("Order state changed during payment initiation"));
+                });
+    }
+
+    private PaymentIntent toPaymentIntent(OrderEntity order) {
+        return new PaymentIntent(order.getId(), order.getPaymentStatus(),
+                order.getUnitPrice().multiply(BigDecimal.valueOf(order.getQuantity())),
+                order.getCurrency(), order.getPaymentStartedAt(), order.getExpiresAt());
+    }
+
+    /**
+     * Called only by the internal signed-webhook handler. The state+event ID
+     * update is atomic on the order document; duplicate webhooks are no-ops.
+     */
+    Mono<OrderReceipt> applyMockPaymentEvent(MockPaymentEvent event) {
+        if (event == null || event.getEventId() == null
+                || !event.getEventId().matches("[A-Za-z0-9._-]{8,100}")
+                || event.getPaymentId() == null
+                || !event.getPaymentId().matches("[0-9a-f]{64}")
+                || (!"SUCCEEDED".equals(event.getOutcome())
+                    && !"DECLINED".equals(event.getOutcome())))
+            return Mono.error(new InvalidInputException("Invalid mock payment event"));
+
+        return orders.findById(event.getPaymentId())
+                .switchIfEmpty(Mono.error(new NotFoundException("Payment not found")))
+                .flatMap(order -> applyEventToOrder(order, event));
+    }
+
+    private Mono<OrderReceipt> applyEventToOrder(OrderEntity order, MockPaymentEvent event) {
+        if (event.getEventId().equals(order.getPaymentEventId())) {
+            if (("SUCCEEDED".equals(event.getOutcome())
+                    && (OrderEntity.PAYMENT_CONFIRMING.equals(order.getStatus())
+                        || OrderEntity.MOCK_PAID.equals(order.getStatus())))
+                    || ("DECLINED".equals(event.getOutcome())
+                        && (OrderEntity.PAYMENT_FAILED_PENDING.equals(order.getStatus())
+                            || OrderEntity.PAYMENT_FAILED.equals(order.getStatus())))) {
+                return settlePayment(order);
+            }
+            return Mono.error(new InvalidInputException("Conflicting replay for payment event"));
+        }
+        if (!OrderEntity.PAYMENT_PENDING.equals(order.getStatus()))
+            return Mono.error(new InvalidInputException("Payment cannot change a terminal order"));
+        if (order.getExpiresAt() == null || !order.getExpiresAt().isAfter(Instant.now()))
+            return Mono.error(new InvalidInputException("Payment window expired"));
+        order.setPaymentEventId(event.getEventId());
+        if ("SUCCEEDED".equals(event.getOutcome())) {
+            order.setStatus(OrderEntity.PAYMENT_CONFIRMING);
+            order.setPaymentStatus("SUCCEEDED");
+        } else {
+            order.setStatus(OrderEntity.PAYMENT_FAILED_PENDING);
+            order.setPaymentStatus("DECLINED");
+        }
+        return orders.save(order)
+                .onErrorResume(OptimisticLockingFailureException.class,
+                        error -> orders.findById(order.getId()))
+                .flatMap(current -> {
+                    if (!event.getEventId().equals(current.getPaymentEventId()))
+                        return Mono.error(new InvalidInputException("Conflicting payment callback"));
+                    return settlePayment(current);
+                });
+    }
+
+    private Mono<OrderReceipt> settlePayment(OrderEntity order) {
+        if (OrderEntity.PAYMENT_CONFIRMING.equals(order.getStatus()))
+            return finishPaymentConfirmation(order);
+        if (OrderEntity.PAYMENT_FAILED_PENDING.equals(order.getStatus()))
+            return finishCancellation(order);
+        return Mono.just(receipt(order));
+    }
+
+    /**
+     * Sale finalization removes the held reservation token WITHOUT restoring
+     * available stock: stock was already decremented when reserved.
+     */
+    private Mono<OrderReceipt> finishPaymentConfirmation(OrderEntity order) {
+        if (!OrderEntity.PAYMENT_CONFIRMING.equals(order.getStatus()))
+            return Mono.just(receipt(order));
+        Criteria filter = Criteria.where("productId").is(order.getProductId())
+                .and("reservedOrderIds").is(order.getId());
+        Update releaseToken = new Update().pull("reservedOrderIds", order.getId());
+        return mongo.findAndModify(Query.query(filter), releaseToken,
+                        FindAndModifyOptions.options().returnNew(true), ProductEntity.class)
+                .hasElement()
+                .flatMap(removed -> {
+                    if (removed) return Mono.just(true);
+                    return products.findByProductId(order.getProductId())
+                            .switchIfEmpty(Mono.error(new NotFoundException("Product missing during payment confirmation")))
+                            .flatMap(product -> {
+                                if (product.getReservedOrderIds() != null
+                                        && product.getReservedOrderIds().contains(order.getId()))
+                                    return Mono.error(new InvalidInputException(
+                                            "Unable to finalize mock payment reservation"));
+                                return Mono.just(false);
+                            });
+                })
+                .then(orders.findById(order.getId()))
+                .flatMap(current -> {
+                    if (OrderEntity.MOCK_PAID.equals(current.getStatus()))
+                        return Mono.just(receipt(current));
+                    if (!OrderEntity.PAYMENT_CONFIRMING.equals(current.getStatus()))
+                        return Mono.error(new InvalidInputException("Order changed during payment confirmation"));
+                    current.setStatus(OrderEntity.MOCK_PAID);
+                    current.setMockPaidAt(Instant.now());
+                    return orders.save(current)
+                            .onErrorResume(OptimisticLockingFailureException.class,
+                                    error -> orders.findById(order.getId()))
+                            .map(this::receipt);
+                });
+    }
+
     private Mono<OrderReceipt> finishCancellation(OrderEntity order) {
         if (OrderEntity.CANCELLED.equals(order.getStatus())
                 || OrderEntity.EXPIRED.equals(order.getStatus())) return Mono.just(receipt(order));
         if (!OrderEntity.CANCELLATION_PENDING.equals(order.getStatus())
-                && !OrderEntity.EXPIRATION_PENDING.equals(order.getStatus()))
+                && !OrderEntity.EXPIRATION_PENDING.equals(order.getStatus())
+                && !OrderEntity.PAYMENT_FAILED_PENDING.equals(order.getStatus()))
             return Mono.error(new InvalidInputException("Cancellation is unavailable"));
 
         Criteria criteria = Criteria.where("productId").is(order.getProductId())
@@ -200,11 +345,16 @@ public class OrderController {
                             || OrderEntity.EXPIRED.equals(current.getStatus()))
                         return Mono.just(receipt(current));
                     if (!OrderEntity.CANCELLATION_PENDING.equals(current.getStatus())
-                            && !OrderEntity.EXPIRATION_PENDING.equals(current.getStatus()))
+                            && !OrderEntity.EXPIRATION_PENDING.equals(current.getStatus())
+                            && !OrderEntity.PAYMENT_FAILED_PENDING.equals(current.getStatus()))
                         return Mono.error(new InvalidInputException(
                                 "Order status changed during cancellation"));
                     current.setStatus(OrderEntity.EXPIRATION_PENDING.equals(current.getStatus())
-                            ? OrderEntity.EXPIRED : OrderEntity.CANCELLED);
+                            ? OrderEntity.EXPIRED
+                            : OrderEntity.PAYMENT_FAILED_PENDING.equals(current.getStatus())
+                              ? OrderEntity.PAYMENT_FAILED : OrderEntity.CANCELLED);
+                    if (OrderEntity.PAYMENT_FAILED.equals(current.getStatus()))
+                        current.setPaymentStatus("DECLINED");
                     return orders.save(current)
                             .onErrorResume(OptimisticLockingFailureException.class,
                                     ignored -> orders.findById(order.getId()))
@@ -222,9 +372,13 @@ public class OrderController {
             if (OrderEntity.PENDING.equals(order.getStatus()))
                 return resume(order);
             if (OrderEntity.CANCELLATION_PENDING.equals(order.getStatus())
-                    || OrderEntity.EXPIRATION_PENDING.equals(order.getStatus()))
+                    || OrderEntity.EXPIRATION_PENDING.equals(order.getStatus())
+                    || OrderEntity.PAYMENT_FAILED_PENDING.equals(order.getStatus()))
                 return finishCancellation(order);
-            if (OrderEntity.RESERVED.equals(order.getStatus())
+            if (OrderEntity.PAYMENT_CONFIRMING.equals(order.getStatus()))
+                return finishPaymentConfirmation(order);
+            if ((OrderEntity.RESERVED.equals(order.getStatus())
+                    || OrderEntity.PAYMENT_PENDING.equals(order.getStatus()))
                     && order.getExpiresAt() != null && !order.getExpiresAt().isAfter(now))
                 return expireReservation(order);
             return Mono.just(receipt(order));
@@ -232,7 +386,8 @@ public class OrderController {
     }
 
     private Mono<OrderReceipt> expireReservation(OrderEntity order) {
-        if (!OrderEntity.RESERVED.equals(order.getStatus()))
+        if (!OrderEntity.RESERVED.equals(order.getStatus())
+                && !OrderEntity.PAYMENT_PENDING.equals(order.getStatus()))
             return Mono.just(receipt(order));
         order.setStatus(OrderEntity.EXPIRATION_PENDING);
         return orders.save(order)
@@ -247,9 +402,12 @@ public class OrderController {
     }
 
     private OrderReceipt receipt(OrderEntity order) {
-        return new OrderReceipt(order.getId(), order.getStatus(), order.getProductId(),
+        OrderReceipt response = new OrderReceipt(order.getId(), order.getStatus(), order.getProductId(),
                 order.getQuantity(), order.getProductName(), order.getUnitPrice(),
                 order.getCurrency(), order.getCreatedAt(), order.getExpiresAt());
+        response.setPaymentStatus(order.getPaymentStatus());
+        response.setMockPaidAt(order.getMockPaidAt());
+        return response;
     }
 
     private void validateOwner(String ownerKey) {
