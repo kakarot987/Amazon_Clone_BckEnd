@@ -518,14 +518,14 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
       .header("X-Mock-Timestamp", timestamp)
       .header("X-Mock-Signature", sig)
       .contentType(APPLICATION_JSON)
-      .bodyValue(body.replace("SUCCEEDED", "DECLINED"))
+      .bodyValue(body.replace("SUCCEEDED", "DECLINED").getBytes(StandardCharsets.UTF_8))
       .exchange().expectStatus().isUnauthorized();
 
     String oldTimestamp = Long.toString(Instant.now().minusSeconds(400).getEpochSecond());
     client.post().uri("/internal/mock-payments/webhook")
       .header("X-Mock-Timestamp", oldTimestamp)
       .header("X-Mock-Signature", paymentSignature(oldTimestamp, body))
-      .contentType(APPLICATION_JSON).bodyValue(body)
+      .contentType(APPLICATION_JSON).bodyValue(body.getBytes(StandardCharsets.UTF_8))
       .exchange().expectStatus().isUnauthorized();
   }
 
@@ -615,7 +615,7 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
     return client.post().uri("/internal/mock-payments/webhook")
       .header("X-Mock-Timestamp", timestamp)
       .header("X-Mock-Signature", paymentSignature(timestamp, body))
-      .contentType(APPLICATION_JSON).bodyValue(body)
+      .contentType(APPLICATION_JSON).bodyValue(body.getBytes(StandardCharsets.UTF_8))
       .exchange();
   }
 
