@@ -28,8 +28,8 @@ services:
     image: rabbitmq:3.13-management
     networks: [backend]
     environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
@@ -55,6 +55,11 @@ services:
       CONFIG_SERVER_URL: http://config-server:8888
       CONFIG_SERVER_USR: ${CONFIG_SERVER_USR:?Set CONFIG_SERVER_USR in .env}
       CONFIG_SERVER_PWD: ${CONFIG_SERVER_PWD:?Set CONFIG_SERVER_PWD in .env}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+      APP_EUREKA_USERNAME: ${EUREKA_USER:?Set EUREKA_USER in .env}
+      APP_EUREKA_PASSWORD: ${EUREKA_PASSWORD:?Set EUREKA_PASSWORD in .env}
     depends_on: [config-server]
     ports: ["127.0.0.1:8761:8761"]
 
@@ -72,13 +77,19 @@ services:
   product:
     build: microservices/product-service
     networks: [backend]
-    environment: *service-env
+    environment:
+      <<: *service-env
+      SERVER_PORT: 8080
+      SPRING_DATA_MONGODB_HOST: mongodb
     depends_on: [config-server, mongodb, rabbitmq, eureka]
 
   recommendation:
     build: microservices/recommendation-service
     networks: [backend]
-    environment: *service-env
+    environment:
+      <<: *service-env
+      SERVER_PORT: 8080
+      SPRING_DATA_MONGODB_HOST: mongodb
     depends_on: [config-server, mongodb, rabbitmq, eureka]
 
   review:
@@ -86,13 +97,18 @@ services:
     networks: [backend]
     environment:
       <<: *service-env
+      SERVER_PORT: 8080
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql/review-db
+      SPRING_DATASOURCE_USERNAME: user
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
     depends_on: [config-server, mysql, rabbitmq, eureka]
 
   product-composite:
     build: microservices/product-composite-service
     networks: [backend]
-    environment: *service-env
+    environment:
+      <<: *service-env
+      SERVER_PORT: 8080
     depends_on: [config-server, rabbitmq, product, recommendation, review, auth-server]
 
   gateway:
