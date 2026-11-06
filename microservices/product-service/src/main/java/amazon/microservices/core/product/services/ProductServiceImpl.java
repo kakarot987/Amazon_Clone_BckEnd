@@ -40,9 +40,7 @@ public class ProductServiceImpl implements ProductService {
     @Override
     public Mono<Product> createProduct(Product body) {
 
-        if (body.getProductId() < 1) {
-            throw new InvalidInputException("Invalid productId: " + body.getProductId());
-        }
+        ProductValidation.validate(body);
 
         ProductEntity entity = mapper.apiToEntity(body);
         Mono<Product> newEntity = repository.save(entity)

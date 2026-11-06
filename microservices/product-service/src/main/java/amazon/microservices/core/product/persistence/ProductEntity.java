@@ -1,5 +1,7 @@
 package amazon.microservices.core.product.persistence;
 
+import java.math.BigDecimal;
+import java.util.List;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.Version;
 import org.springframework.data.mongodb.core.index.Indexed;
@@ -21,6 +23,13 @@ public class ProductEntity {
 
     private String name;
     private int weight;
+    private String sku;
+    private String description;
+    private String category;
+    private BigDecimal price;
+    private String currency;
+    private Integer stockQuantity;
+    private List<String> imageUrls;
 
     public ProductEntity() {
     }
@@ -55,6 +64,21 @@ public class ProductEntity {
     public int getWeight() {
         return weight;
     }
+
+    public String getSku() { return sku; }
+    public String getDescription() { return description; }
+    public String getCategory() { return category; }
+    public BigDecimal getPrice() { return price; }
+    public String getCurrency() { return currency; }
+    public Integer getStockQuantity() { return stockQuantity; }
+    public List<String> getImageUrls() { return imageUrls; }
+    public void setSku(String sku) { this.sku = sku; }
+    public void setDescription(String description) { this.description = description; }
+    public void setCategory(String category) { this.category = category; }
+    public void setPrice(BigDecimal price) { this.price = price; }
+    public void setCurrency(String currency) { this.currency = currency; }
+    public void setStockQuantity(Integer stockQuantity) { this.stockQuantity = stockQuantity; }
+    public void setImageUrls(List<String> imageUrls) { this.imageUrls = imageUrls; }
 
     public void setId(String id) {
         this.id = id;

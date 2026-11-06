@@ -37,6 +37,14 @@ public class MessageProcessorConfig {
                     productService.createProduct(product).block();
                     break;
 
+                case UPDATE:
+                    Product update = event.getData();
+                    if (update == null || update.getProductId() != event.getKey()) {
+                        throw new EventProcessingException("Invalid UPDATE event for product");
+                    }
+                    ((ProductCatalogOperations) productService).updateProduct(update.getProductId(), update).block();
+                    break;
+
                 case DELETE:
                     int productId = event.getKey();
                     LOG.info("Delete product with ProductID: {}", productId);
