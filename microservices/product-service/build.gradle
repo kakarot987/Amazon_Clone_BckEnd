@@ -62,3 +62,7 @@ dependencyManagement {
 tasks.named('test') {
 	useJUnitPlatform()
 }
+// Deterministic artifact name for local Docker Compose images.
+tasks.named('bootJar') {
+    archiveFileName = 'app.jar'
+}

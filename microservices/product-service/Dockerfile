@@ -1,7 +1,5 @@
-FROM openjdk:23
-
+FROM eclipse-temurin:17-jre
+WORKDIR /app
+COPY build/libs/app.jar /app/app.jar
 EXPOSE 8080
-
-ADD ./build/libs/*.jar app.jar
-
-ENTRYPOINT ["java","-jar","/app.jar"]
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]
