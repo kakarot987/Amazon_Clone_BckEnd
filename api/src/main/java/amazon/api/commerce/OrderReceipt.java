@@ -15,6 +15,8 @@ public class OrderReceipt {
     private String currency;
     private Instant createdAt;
     private Instant expiresAt;
+    private String paymentStatus;
+    private Instant mockPaidAt;
     public OrderReceipt() {}
     public OrderReceipt(String id, String status, int productId, int quantity,
                         String name, BigDecimal price, String currency, Instant createdAt) {
@@ -44,6 +46,8 @@ public class OrderReceipt {
     public String getCurrency() { return currency; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getExpiresAt() { return expiresAt; }
+    public String getPaymentStatus() { return paymentStatus; }
+    public Instant getMockPaidAt() { return mockPaidAt; }
     public void setOrderId(String id) { this.orderId = id; }
     public void setStatus(String status) { this.status = status; }
     public void setProductId(int value) { this.productId = value; }
@@ -54,4 +58,6 @@ public class OrderReceipt {
     public void setCurrency(String currency) { this.currency = currency; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public void setExpiresAt(Instant expiresAt) { this.expiresAt = expiresAt; }
+    public void setPaymentStatus(String paymentStatus) { this.paymentStatus = paymentStatus; }
+    public void setMockPaidAt(Instant mockPaidAt) { this.mockPaidAt = mockPaidAt; }
 }
