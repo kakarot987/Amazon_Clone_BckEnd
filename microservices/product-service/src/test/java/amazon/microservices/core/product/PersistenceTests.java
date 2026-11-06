@@ -6,12 +6,22 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.data.mongo.DataMongoTest;
+import org.springframework.boot.SpringBootConfiguration;
+import org.springframework.test.context.ContextConfiguration;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import reactor.test.StepVerifier;
 
+@ContextConfiguration(classes = PersistenceTests.MongoOnlyTestApplication.class)
 @DataMongoTest(properties = {"spring.cloud.config.enabled=false","spring.main.allow-bean-definition-overriding=true", "spring.cloud.config.enabled=false"})
 class PersistenceTests extends MongoDbTestBase {
+
+  // Avoid component-scanning the full product application from a Mongo test slice.
+  // Otherwise unrelated controllers (including signed payment webhooks) are
+  // created without the WebFlux/Jackson beans that the slice intentionally omits.
+  @SpringBootConfiguration
+  static class MongoOnlyTestApplication {}
+
 
   @Autowired
   private ProductRepository repository;
