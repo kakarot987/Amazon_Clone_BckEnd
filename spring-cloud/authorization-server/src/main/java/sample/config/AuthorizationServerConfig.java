@@ -121,6 +121,10 @@ public class AuthorizationServerConfig {
       .scope(OidcScopes.OPENID)
       .scope("product:read")
       .scope("product:write")
+      .scope("cart:read")
+      .scope("cart:write")
+      .scope("inventory:read")
+      .scope("inventory:write")
       .clientSettings(ClientSettings.builder().requireAuthorizationConsent(true).build())
       .tokenSettings(TokenSettings.builder().accessTokenTimeToLive(Duration.ofHours(1)).build())
       .build();
@@ -136,6 +140,8 @@ public class AuthorizationServerConfig {
       .redirectUri("https://localhost:8443/openapi/webjars/swagger-ui/oauth2-redirect.html")
       .scope(OidcScopes.OPENID)
       .scope("product:read")
+      .scope("cart:read")
+      .scope("inventory:read")
       .clientSettings(ClientSettings.builder().requireAuthorizationConsent(true).build())
       .tokenSettings(TokenSettings.builder().accessTokenTimeToLive(Duration.ofHours(1)).build())
       .build();
