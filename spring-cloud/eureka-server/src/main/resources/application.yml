@@ -1,46 +1,25 @@
+server:
+  port: 8761
+
 spring:
   application:
     name: eureka-server
-  profiles:
-    active: native
-
----
-spring:
   config:
-    import: "configserver:http://localhost:8888"
-    activate:
-      on-profile: native
+    import: "configserver:${CONFIG_SERVER_URL:http://localhost:8888}"
   cloud:
     config:
-      failFast: true
+      fail-fast: true
+      username: ${CONFIG_SERVER_USR}
+      password: ${CONFIG_SERVER_PWD}
       retry:
-        initialInterval: 3000
+        initial-interval: 3000
         multiplier: 1.3
-        maxInterval: 10000
-        maxAttempts: 20
-      uri: http://localhost:8888
-      username: root
-      password: root
-
-management:
-  security:
-    enabled: false
+        max-interval: 10000
+        max-attempts: 20
 
 ---
-
 spring:
   config:
-    import: "configserver:http://config-server:8888"
     activate:
       on-profile: docker
-  cloud:
-    config:
-      failFast: true
-      retry:
-        initialInterval: 3000
-        multiplier: 1.3
-        maxInterval: 10000
-        maxAttempts: 20
-      uri:  http://config-server:8888
-      username: root
-      password: root
+    import: "configserver:${CONFIG_SERVER_URL:http://config-server:8888}"
