@@ -14,9 +14,15 @@ public class OrderReceipt {
     private BigDecimal total;
     private String currency;
     private Instant createdAt;
+    private Instant expiresAt;
     public OrderReceipt() {}
     public OrderReceipt(String id, String status, int productId, int quantity,
                         String name, BigDecimal price, String currency, Instant createdAt) {
+        this(id, status, productId, quantity, name, price, currency, createdAt, null);
+    }
+    public OrderReceipt(String id, String status, int productId, int quantity,
+                        String name, BigDecimal price, String currency, Instant createdAt,
+                        Instant expiresAt) {
         this.orderId = id;
         this.status = status;
         this.productId = productId;
@@ -26,6 +32,7 @@ public class OrderReceipt {
         this.total = price.multiply(BigDecimal.valueOf(quantity));
         this.currency = currency;
         this.createdAt = createdAt;
+        this.expiresAt = expiresAt;
     }
     public String getOrderId() { return orderId; }
     public String getStatus() { return status; }
@@ -36,6 +43,7 @@ public class OrderReceipt {
     public BigDecimal getTotal() { return total; }
     public String getCurrency() { return currency; }
     public Instant getCreatedAt() { return createdAt; }
+    public Instant getExpiresAt() { return expiresAt; }
     public void setOrderId(String id) { this.orderId = id; }
     public void setStatus(String status) { this.status = status; }
     public void setProductId(int value) { this.productId = value; }
@@ -45,4 +53,5 @@ public class OrderReceipt {
     public void setTotal(BigDecimal total) { this.total = total; }
     public void setCurrency(String currency) { this.currency = currency; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
+    public void setExpiresAt(Instant expiresAt) { this.expiresAt = expiresAt; }
 }

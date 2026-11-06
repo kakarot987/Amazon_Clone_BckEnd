@@ -9,6 +9,7 @@ import amazon.microservices.core.product.persistence.ProductEntity;
 import amazon.microservices.core.product.persistence.ProductRepository;
 import amazon.util.exceptions.InvalidInputException;
 import amazon.util.exceptions.NotFoundException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
@@ -20,6 +21,8 @@ import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
 
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -39,13 +42,18 @@ public class OrderController {
     private final CartRepository carts;
     private final ProductRepository products;
     private final ReactiveMongoTemplate mongo;
+    private final Duration reservationTtl;
 
     public OrderController(OrderRepository orders, CartRepository carts,
-                           ProductRepository products, ReactiveMongoTemplate mongo) {
+                           ProductRepository products, ReactiveMongoTemplate mongo,
+                           @Value("${app.orders.reservation-ttl:PT15M}") Duration reservationTtl) {
         this.orders = orders;
         this.carts = carts;
         this.products = products;
         this.mongo = mongo;
+        if (reservationTtl.isZero() || reservationTtl.isNegative())
+            throw new IllegalArgumentException("Reservation TTL must be positive");
+        this.reservationTtl = reservationTtl;
     }
 
     @PostMapping("/{ownerKey}")
@@ -71,8 +79,11 @@ public class OrderController {
         validateOwner(ownerKey);
         validateOrderId(orderId);
         return ownedOrder(ownerKey, orderId).flatMap(order -> {
-            if (OrderEntity.CANCELLED.equals(order.getStatus())) return Mono.just(receipt(order));
-            if (OrderEntity.CANCELLATION_PENDING.equals(order.getStatus()))
+            if (OrderEntity.CANCELLED.equals(order.getStatus())
+                    || OrderEntity.EXPIRED.equals(order.getStatus()))
+                return Mono.just(receipt(order));
+            if (OrderEntity.CANCELLATION_PENDING.equals(order.getStatus())
+                    || OrderEntity.EXPIRATION_PENDING.equals(order.getStatus()))
                 return finishCancellation(order);
             if (!OrderEntity.RESERVED.equals(order.getStatus()))
                 return Mono.error(new InvalidInputException("Only reserved orders may be cancelled"));
@@ -110,7 +121,8 @@ public class OrderController {
                                     return Mono.error(new InvalidInputException(
                                             "Product price and currency must be configured"));
                                 OrderEntity order = new OrderEntity(id, ownerKey, product.getProductId(),
-                                        item.getQuantity(), product.getName(), price, product.getCurrency());
+                                        item.getQuantity(), product.getName(), price, product.getCurrency(),
+                                        Instant.now().plus(reservationTtl));
                                 return orders.save(order)
                                         .onErrorResume(DuplicateKeyException.class,
                                                 ignored -> orders.findById(id))
@@ -154,8 +166,10 @@ public class OrderController {
     }
 
     private Mono<OrderReceipt> finishCancellation(OrderEntity order) {
-        if (OrderEntity.CANCELLED.equals(order.getStatus())) return Mono.just(receipt(order));
-        if (!OrderEntity.CANCELLATION_PENDING.equals(order.getStatus()))
+        if (OrderEntity.CANCELLED.equals(order.getStatus())
+                || OrderEntity.EXPIRED.equals(order.getStatus())) return Mono.just(receipt(order));
+        if (!OrderEntity.CANCELLATION_PENDING.equals(order.getStatus())
+                && !OrderEntity.EXPIRATION_PENDING.equals(order.getStatus()))
             return Mono.error(new InvalidInputException("Cancellation is unavailable"));
 
         Criteria criteria = Criteria.where("productId").is(order.getProductId())
@@ -182,12 +196,15 @@ public class OrderController {
                 })
                 .then(orders.findById(order.getId()))
                 .flatMap(current -> {
-                    if (OrderEntity.CANCELLED.equals(current.getStatus()))
+                    if (OrderEntity.CANCELLED.equals(current.getStatus())
+                            || OrderEntity.EXPIRED.equals(current.getStatus()))
                         return Mono.just(receipt(current));
-                    if (!OrderEntity.CANCELLATION_PENDING.equals(current.getStatus()))
+                    if (!OrderEntity.CANCELLATION_PENDING.equals(current.getStatus())
+                            && !OrderEntity.EXPIRATION_PENDING.equals(current.getStatus()))
                         return Mono.error(new InvalidInputException(
                                 "Order status changed during cancellation"));
-                    current.setStatus(OrderEntity.CANCELLED);
+                    current.setStatus(OrderEntity.EXPIRATION_PENDING.equals(current.getStatus())
+                            ? OrderEntity.EXPIRED : OrderEntity.CANCELLED);
                     return orders.save(current)
                             .onErrorResume(OptimisticLockingFailureException.class,
                                     ignored -> orders.findById(order.getId()))
@@ -195,10 +212,44 @@ public class OrderController {
                 });
     }
 
+
+    /**
+     * Internal recovery entry point. Always reloads current state to avoid
+     * acting on stale status snapshots from a background scan.
+     */
+    Mono<OrderReceipt> reconcileOrder(String id, Instant now) {
+        return orders.findById(id).flatMap(order -> {
+            if (OrderEntity.PENDING.equals(order.getStatus()))
+                return resume(order);
+            if (OrderEntity.CANCELLATION_PENDING.equals(order.getStatus())
+                    || OrderEntity.EXPIRATION_PENDING.equals(order.getStatus()))
+                return finishCancellation(order);
+            if (OrderEntity.RESERVED.equals(order.getStatus())
+                    && order.getExpiresAt() != null && !order.getExpiresAt().isAfter(now))
+                return expireReservation(order);
+            return Mono.just(receipt(order));
+        });
+    }
+
+    private Mono<OrderReceipt> expireReservation(OrderEntity order) {
+        if (!OrderEntity.RESERVED.equals(order.getStatus()))
+            return Mono.just(receipt(order));
+        order.setStatus(OrderEntity.EXPIRATION_PENDING);
+        return orders.save(order)
+                .onErrorResume(OptimisticLockingFailureException.class,
+                        ignored -> orders.findById(order.getId()))
+                .flatMap(current -> {
+                    if (OrderEntity.EXPIRATION_PENDING.equals(current.getStatus())
+                            || OrderEntity.CANCELLATION_PENDING.equals(current.getStatus()))
+                        return finishCancellation(current);
+                    return Mono.just(receipt(current));
+                });
+    }
+
     private OrderReceipt receipt(OrderEntity order) {
         return new OrderReceipt(order.getId(), order.getStatus(), order.getProductId(),
                 order.getQuantity(), order.getProductName(), order.getUnitPrice(),
-                order.getCurrency(), order.getCreatedAt());
+                order.getCurrency(), order.getCreatedAt(), order.getExpiresAt());
     }
 
     private void validateOwner(String ownerKey) {

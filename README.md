@@ -184,3 +184,41 @@ active reservations cannot be edited or deleted using the existing
 catalog API. Existing products must have stock and price configured
 to be eligible. Do not treat this as production checkout without
 end-to-end tests, operation monitoring and a reconciliation process.
+
+## Reservation expiration and recovery (Phase 2, draft)
+
+Unpaid, single-item `RESERVED` orders expire after **15 minutes** by
+default. Expiry starts when the order intent is created. Configurable
+settings for the product service:
+
+```yaml
+app:
+  orders:
+    reservation-ttl: PT15M
+    recovery-interval: PT30S
+    recovery-batch-size: 100
+```
+
+The product service periodically retries orders in `PENDING`,
+`CANCELLATION_PENDING` and `EXPIRATION_PENDING` and expires overdue
+`RESERVED` orders. The release flow records `EXPIRATION_PENDING`
+before returning stock, and then moves to `EXPIRED`. Order receipts
+include `expiresAt`. When the process crashes between operations,
+the next recovery pass retries unfinished work. Each product's
+reservation-ID list prevents double stock deduction and double release.
+
+A `RESERVED` order is **never paid** in this prototype. Expiry does
+not perform a refund, capture, settlement or fulfillment cancellation.
+A retry of the same checkout idempotency key returns the prior order,
+even if it is expired; use a new key to create a new order intent.
+
+**Operational limitations:** The recovery pass scans order documents
+and processes up to 100 unfinished/expired items per interval by
+default. Very large deployments need indexed status/expiry queries,
+observability/alerts, retention and a separately audited reservation
+ledger. Order and product documents are still **not in a MongoDB
+transaction**. Crash recovery is best effort, and pending orders that
+cannot reserve stock continue to require investigation. Before any
+real payment integration, add distributed worker coordination and
+stress-test conflicting orders, cancellations, inventory edits and
+process crashes.

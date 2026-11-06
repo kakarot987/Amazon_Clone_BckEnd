@@ -5,6 +5,7 @@ import org.springframework.data.annotation.Version;
 import org.springframework.data.mongodb.core.mapping.Document;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.Duration;
 
 /** Durable checkout intent, no payment is charged. */
 @Document(collection = "orders")
@@ -13,6 +14,8 @@ public class OrderEntity {
     public static final String RESERVED = "RESERVED";
     public static final String CANCELLATION_PENDING = "CANCELLATION_PENDING";
     public static final String CANCELLED = "CANCELLED";
+    public static final String EXPIRATION_PENDING = "EXPIRATION_PENDING";
+    public static final String EXPIRED = "EXPIRED";
     @Id private String id;
     @Version private Long version;
     private String ownerKey;
@@ -23,9 +26,15 @@ public class OrderEntity {
     private String currency;
     private String status;
     private Instant createdAt;
+    private Instant expiresAt;
     public OrderEntity() {}
     public OrderEntity(String id, String ownerKey, int productId, int quantity,
                        String name, BigDecimal price, String currency) {
+        this(id, ownerKey, productId, quantity, name, price, currency,
+                Instant.now().plus(Duration.ofMinutes(15)));
+    }
+    public OrderEntity(String id, String ownerKey, int productId, int quantity,
+                       String name, BigDecimal price, String currency, Instant expiresAt) {
         this.id = id;
         this.ownerKey = ownerKey;
         this.productId = productId;
@@ -35,6 +44,7 @@ public class OrderEntity {
         this.currency = currency;
         this.status = PENDING;
         this.createdAt = Instant.now();
+        this.expiresAt = expiresAt;
     }
     public String getId() { return id; }
     public Long getVersion() { return version; }
@@ -46,6 +56,11 @@ public class OrderEntity {
     public String getCurrency() { return currency; }
     public String getStatus() { return status; }
     public Instant getCreatedAt() { return createdAt; }
+    // Existing orders without an expiry retain the documented 15-minute TTL.
+    public Instant getExpiresAt() {
+        return expiresAt != null ? expiresAt
+                : createdAt == null ? null : createdAt.plus(Duration.ofMinutes(15));
+    }
     public void setId(String id) { this.id = id; }
     public void setVersion(Long version) { this.version = version; }
     public void setOwnerKey(String ownerKey) { this.ownerKey = ownerKey; }
@@ -56,4 +71,5 @@ public class OrderEntity {
     public void setCurrency(String currency) { this.currency = currency; }
     public void setStatus(String status) { this.status = status; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
+    public void setExpiresAt(Instant expiresAt) { this.expiresAt = expiresAt; }
 }
