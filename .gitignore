@@ -27,3 +27,8 @@ bin
 /.nb-gradle/
 .DS_Store
 ML-labb
+
+# Local credentials
+.env
+.env.*
+!.env.example

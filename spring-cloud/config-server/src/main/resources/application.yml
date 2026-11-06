@@ -4,38 +4,22 @@ server:
 spring:
   application:
     name: config-server
-  profiles:
-    active: docker
-
-management.endpoint.health.show-details: "ALWAYS"
-management.endpoints.web.exposure.include: "*"
-
-logging:
-  level:
-    root: info
----
-spring:
-  config:
-    activate:
-      on-profile: native
   cloud:
     config:
       server:
         git:
-          uri: https://github.com/kakarot987/config-repo.git
-          username: kakarot987
-          password: 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
-          skipSslValidation: true
----
-spring:
-  config:
-    activate:
-      on-profile: docker
-  cloud:
-    config:
-      server:
-        git:
-          uri: https://github.com/kakarot987/config-repo.git
-          username: kakarot987
-          password: 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
-          skipSslValidation: true
+          # Public configuration repository. For private repos, inject credentials
+          # from the environment; never commit access tokens.
+          uri: ${CONFIG_GIT_URI:https://github.com/kakarot987/config-repo.git}
+          username: ${CONFIG_GIT_USERNAME:}
+          password: ${CONFIG_GIT_TOKEN:}
+          skipSslValidation: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when_authorized
