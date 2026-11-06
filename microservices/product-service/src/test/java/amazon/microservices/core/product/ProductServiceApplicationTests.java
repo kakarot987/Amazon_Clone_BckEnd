@@ -529,6 +529,65 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
       .exchange().expectStatus().isUnauthorized();
   }
 
+
+  @Test
+  void lateSignedSuccessIsRejectedAfterReservationExpiry() {
+    Product p = new Product(153, "Wireless mouse", 1, null);
+    p.setStockQuantity(1);
+    p.setPrice(new java.math.BigDecimal("15.00"));
+    p.setCurrency("USD");
+    messageProcessor.accept(new Event<>(CREATE, 153, p));
+    client.put().uri("/internal/carts/" + CART_OWNER + "/items/153")
+      .contentType(APPLICATION_JSON).bodyValue(new QuantityRequest(1))
+      .exchange().expectStatus().isOk();
+    client.post().uri("/internal/orders/" + CART_OWNER)
+      .header("Idempotency-Key", "late-success-key-153")
+      .exchange().expectStatus().isOk();
+    String id = orderRepository.findAll().blockFirst().getId();
+    client.post().uri("/internal/orders/" + CART_OWNER + "/" + id + "/payment")
+      .exchange().expectStatus().isOk();
+
+    var pending = orderRepository.findById(id).block();
+    pending.setExpiresAt(Instant.now().minusSeconds(2));
+    orderRepository.save(pending).block();
+
+    sendSignedPaymentEvent(paymentEvent("late-success-event-153", id, "SUCCEEDED"))
+      .expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    recoveryWorker.recoverOnce().block();
+    assertEquals("EXPIRED", orderRepository.findById(id).block().getStatus());
+    assertEquals(1, repository.findByProductId(153).block().getStockQuantity());
+  }
+
+  @Test
+  void workerFinishesInterruptedPaymentConfirmation() {
+    Product p = new Product(154, "Tablet stand", 1, null);
+    p.setStockQuantity(3);
+    p.setPrice(new java.math.BigDecimal("8.00"));
+    p.setCurrency("USD");
+    messageProcessor.accept(new Event<>(CREATE, 154, p));
+    client.put().uri("/internal/carts/" + CART_OWNER + "/items/154")
+      .contentType(APPLICATION_JSON).bodyValue(new QuantityRequest(2))
+      .exchange().expectStatus().isOk();
+    client.post().uri("/internal/orders/" + CART_OWNER)
+      .header("Idempotency-Key", "recovery-success-key-154")
+      .exchange().expectStatus().isOk();
+    String id = orderRepository.findAll().blockFirst().getId();
+    client.post().uri("/internal/orders/" + CART_OWNER + "/" + id + "/payment")
+      .exchange().expectStatus().isOk();
+    var pending = orderRepository.findById(id).block();
+    pending.setStatus("PAYMENT_CONFIRMING");
+    pending.setPaymentStatus("SUCCEEDED");
+    pending.setPaymentEventId("recovery-event-154");
+    orderRepository.save(pending).block();
+
+    recoveryWorker.recoverOnce().block();
+    assertEquals("MOCK_PAID", orderRepository.findById(id).block().getStatus());
+    assertEquals(1, repository.findByProductId(154).block().getStockQuantity());
+    assertTrue(repository.findByProductId(154).block().getReservedOrderIds().isEmpty());
+    recoveryWorker.recoverOnce().block();
+    assertEquals(1, repository.findByProductId(154).block().getStockQuantity());
+  }
+
   private String paymentEvent(String eventId, String paymentId, String outcome) {
     try {
       return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(
