@@ -79,7 +79,14 @@ public class ProductServiceImpl implements ProductService {
         }
 
         LOG.debug("deleteProduct: tries to delete an entity with productId: {}", productId);
-        return repository.findByProductId(productId).log(LOG.getName(), FINE).map(e -> repository.delete(e)).flatMap(e -> e);
+        return repository.findByProductId(productId).log(LOG.getName(), FINE)
+                .flatMap(entity -> {
+                    if (entity.getReservedOrderIds() != null && !entity.getReservedOrderIds().isEmpty()) {
+                        return Mono.error(new InvalidInputException(
+                                "Cannot delete product with active order reservations"));
+                    }
+                    return repository.delete(entity);
+                });
     }
 
     private Product setServiceAddress(Product e) {
