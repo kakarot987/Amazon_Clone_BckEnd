@@ -26,6 +26,13 @@ class MapperTests {
     assertEquals(api.getName(), entity.getName());
     assertEquals(api.getWeight(), entity.getWeight());
 
+    entity.setSku("SKU-1");
+    entity.setCategory("books");
+    entity.setPrice(new java.math.BigDecimal("15.50"));
+    entity.setCurrency("USD");
+    entity.setStockQuantity(7);
+    entity.setImageUrls(java.util.List.of("https://example.com/book.jpg"));
+
     Product api2 = mapper.entityToApi(entity);
 
     assertEquals(api.getProductId(), api2.getProductId());
@@ -33,5 +40,11 @@ class MapperTests {
     assertEquals(api.getName(),      api2.getName());
     assertEquals(api.getWeight(),    api2.getWeight());
     assertNull(api2.getServiceAddress());
+    assertEquals("SKU-1", api2.getSku());
+    assertEquals("books", api2.getCategory());
+    assertEquals(new java.math.BigDecimal("15.50"), api2.getPrice());
+    assertEquals("USD", api2.getCurrency());
+    assertEquals(7, api2.getStockQuantity());
+    assertEquals(java.util.List.of("https://example.com/book.jpg"), api2.getImageUrls());
   }
 }

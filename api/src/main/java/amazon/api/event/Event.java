@@ -9,7 +9,7 @@ import static java.time.ZonedDateTime.now;
 
 public class Event<K, T> {
 
-    public enum Type {CREATE, DELETE}
+    public enum Type {CREATE, UPDATE, DELETE}
 
     private Event.Type eventType;
     private K key;

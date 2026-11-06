@@ -57,3 +57,34 @@ HTTPS on the gateway; do not treat it as a current end-to-end test.
   and real production monitoring are not implemented.
 - Spring Boot / Spring Cloud dependencies should be upgraded together after
   the current build and startup path is verified.
+
+## Product Catalog V2 (draft)
+
+Legacy product creation and `GET /product-composite/{id}` still work.
+
+Optional metadata fields: `sku`, `description`, `category`, `price`
+(decimal), `currency` (ISO 4217), `stockQuantity` (nonnegative),
+`imageUrls` (HTTPS URLs). Existing Mongo documents continue to deserialize
+with null values for the new fields; no destructive migration is required.
+
+Via Gateway (JWT `product:read` / `product:write` scopes):
+
+- `GET /product-composite?query=shoes&category=footwear&page=0&size=20`
+  returns `{products, page, size, totalElements, totalPages}`.
+- `PUT /product-composite/{id}` accepts a full product document and returns
+  `202 Accepted` when an UPDATE event is published. Read-after-write is
+  eventually consistent; the consumer rejects updates to missing products.
+- `POST /product-composite` supports the new optional fields and retains
+  existing review/recommendation creation.
+
+The internal `product` service provides `GET /products` and
+`PUT /product/{id}` for internal integration; those ports should remain
+private. The listing is sorted by `productId`, filters category exactly and
+uses case-insensitive substring matching across name, description and SKU.
+Page sizes are capped at 100. For large catalogs, adopt proper full-text
+indexes/search infrastructure and cursor pagination.
+
+This is catalog metadata only: stockQuantity is **not** reserved inventory,
+SKU is not yet enforced unique, and price changes do not implement checkout,
+tax, or currency conversion. Validation and event-delivery guarantees must be
+verified before deploying.

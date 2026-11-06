@@ -22,6 +22,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import amazon.api.core.product.Product;
+import amazon.api.core.product.ProductPage;
 import amazon.api.core.product.ProductService;
 import amazon.api.core.recommendation.Recommendation;
 import amazon.api.core.recommendation.RecommendationService;
@@ -42,6 +43,7 @@ import static org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY;
 import static reactor.core.publisher.Flux.empty;
 import static amazon.api.event.Event.Type.CREATE;
 import static amazon.api.event.Event.Type.DELETE;
+import static amazon.api.event.Event.Type.UPDATE;
 
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.cloud.stream.function.StreamBridge;
@@ -77,6 +79,26 @@ public class ProductCompositeIntegration implements ProductService, Recommendati
         this.mapper = mapper;
         this.streamBridge = streamBridge;
         this.serviceUtil = serviceUtil;
+    }
+
+    /** Query the internal catalog through the discovery-aware WebClient. */
+    public Mono<ProductPage> listProducts(String query, String category, int page, int size) {
+        return webClient.get()
+                .uri(builder -> {
+                    builder.scheme("http").host("product").path("/products")
+                            .queryParam("page", page).queryParam("size", size);
+                    if (query != null && !query.isBlank()) builder.queryParam("query", query);
+                    if (category != null && !category.isBlank()) builder.queryParam("category", category);
+                    return builder.build();
+                })
+                .retrieve().bodyToMono(ProductPage.class)
+                .onErrorMap(WebClientResponseException.class, this::handleException);
+    }
+
+    public Mono<Void> updateProduct(Product body) {
+        return Mono.fromRunnable(() ->
+                sendMessage("products-out-0", new Event(UPDATE, body.getProductId(), body)))
+                .subscribeOn(publishEventScheduler).then();
     }
 
     @Override
@@ -183,7 +205,9 @@ public class ProductCompositeIntegration implements ProductService, Recommendati
         Message message = MessageBuilder.withPayload(event)
                 .setHeader("partitionKey", event.getKey())
                 .build();
-        streamBridge.send(bindingName, message);
+        if (!streamBridge.send(bindingName, message)) {
+            throw new IllegalStateException("Failed to publish event to " + bindingName);
+        }
     }
 
     private Throwable handleException(Throwable ex) {

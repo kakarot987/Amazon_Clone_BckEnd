@@ -64,6 +64,13 @@ public class ProductCompositeServiceImpl implements ProductCompositeService {
             LOG.info("Will create a new composite entity for product.id: {}", body.getProductId());
 
             Product product = new Product(body.getProductId(), body.getName(), body.getWeight(), null);
+            product.setSku(body.getSku());
+            product.setDescription(body.getDescription());
+            product.setCategory(body.getCategory());
+            product.setPrice(body.getPrice());
+            product.setCurrency(body.getCurrency());
+            product.setStockQuantity(body.getStockQuantity());
+            product.setImageUrls(body.getImageUrls());
             monoList.add(integration.createProduct(product));
 
             if (body.getRecommendations() != null) {
@@ -171,7 +178,15 @@ public class ProductCompositeServiceImpl implements ProductCompositeService {
         String recommendationAddress = (recommendations != null && recommendations.size() > 0) ? recommendations.get(0).getServiceAddress() : "";
         ServiceAddresses serviceAddresses = new ServiceAddresses(serviceAddress, productAddress, reviewAddress, recommendationAddress);
 
-        return new ProductAggregate(productId, name, weight, recommendationSummaries, reviewSummaries, serviceAddresses);
+        ProductAggregate aggregate = new ProductAggregate(productId, name, weight, recommendationSummaries, reviewSummaries, serviceAddresses);
+        aggregate.setSku(product.getSku());
+        aggregate.setDescription(product.getDescription());
+        aggregate.setCategory(product.getCategory());
+        aggregate.setPrice(product.getPrice());
+        aggregate.setCurrency(product.getCurrency());
+        aggregate.setStockQuantity(product.getStockQuantity());
+        aggregate.setImageUrls(product.getImageUrls());
+        return aggregate;
     }
 
     private Mono<SecurityContext> getLogAuthorizationInfoMono() {
