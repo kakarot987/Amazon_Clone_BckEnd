@@ -40,7 +40,9 @@ public class MockPaymentsCompositeController {
         return client.post().uri("http://product/internal/mock-payments/webhook")
                 .header("X-Mock-Timestamp", timestamp)
                 .header("X-Mock-Signature", signature)
-                .contentType(MediaType.APPLICATION_JSON).bodyValue(rawBody)
+                .contentType(MediaType.APPLICATION_JSON)
+                // Forward exact UTF-8 bytes: JSON reserialization would invalidate HMAC.
+                .bodyValue(rawBody.getBytes(java.nio.charset.StandardCharsets.UTF_8))
                 .retrieve().bodyToMono(OrderReceipt.class).onErrorMap(this::mapError);
     }
 
