@@ -22,11 +22,12 @@ public class HealthCheckConfiguration {
 
     private final WebClient.Builder webClientBuilder;
 
-    private WebClient webClient;
+    private final WebClient webClient;
 
     @Autowired
     public HealthCheckConfiguration(WebClient.Builder webClientBuilder) {
         this.webClientBuilder = webClientBuilder;
+        this.webClient = webClientBuilder.build();
     }
 
     @Bean

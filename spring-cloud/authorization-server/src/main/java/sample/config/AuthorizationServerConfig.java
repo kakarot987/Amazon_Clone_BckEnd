@@ -38,6 +38,8 @@ import org.springframework.security.oauth2.server.authorization.settings.TokenSe
 import org.springframework.security.web.util.matcher.RequestMatcher;
 import sample.jose.Jwks;
 
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
@@ -103,10 +105,13 @@ public class AuthorizationServerConfig {
   }
 
   @Bean
-  public RegisteredClientRepository registeredClientRepository() {
+  public RegisteredClientRepository registeredClientRepository(
+      @Value("${AUTH_WRITER_CLIENT_SECRET}") String writerClientSecret,
+      @Value("${AUTH_READER_CLIENT_SECRET}") String readerClientSecret,
+      PasswordEncoder passwordEncoder) {
     RegisteredClient writerClient = RegisteredClient.withId(UUID.randomUUID().toString())
       .clientId("writer")
-      .clientSecret("{noop}secret-writer")
+      .clientSecret(passwordEncoder.encode(writerClientSecret))
       .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
       .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
       .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
@@ -122,7 +127,7 @@ public class AuthorizationServerConfig {
 
     RegisteredClient readerClient = RegisteredClient.withId(UUID.randomUUID().toString())
       .clientId("reader")
-      .clientSecret("{noop}secret-reader")
+      .clientSecret(passwordEncoder.encode(readerClientSecret))
       .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
       .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
       .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
@@ -152,8 +157,9 @@ public class AuthorizationServerConfig {
   }
 
   @Bean
-  public AuthorizationServerSettings authorizationServerSettings() {
-    return AuthorizationServerSettings.builder().issuer("http://auth-server:9999").build();
+  public AuthorizationServerSettings authorizationServerSettings(
+      @Value("${AUTH_ISSUER_URI:http://auth-server:9999}") String issuer) {
+    return AuthorizationServerSettings.builder().issuer(issuer).build();
   }
 
   private Consumer<List<AuthenticationProvider>> configureAuthenticationValidator() {
