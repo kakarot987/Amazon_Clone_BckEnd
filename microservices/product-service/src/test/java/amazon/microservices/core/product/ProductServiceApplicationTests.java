@@ -3,6 +3,9 @@ package amazon.microservices.core.product;
 import amazon.api.core.product.Product;
 import amazon.api.event.Event;
 import amazon.microservices.core.product.persistence.ProductRepository;
+import amazon.microservices.core.product.persistence.CartRepository;
+import amazon.api.commerce.StockAdjustment;
+import amazon.api.commerce.QuantityRequest;
 import amazon.util.exceptions.InvalidInputException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,12 +37,16 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
   private ProductRepository repository;
 
   @Autowired
+  private CartRepository cartRepository;
+
+  @Autowired
   @Qualifier("messageProcessor")
   private Consumer<Event<Integer, Product>> messageProcessor;
 
   @BeforeEach
   void setupDb() {
     repository.deleteAll().block();
+    cartRepository.deleteAll().block();
   }
 
   @Test
@@ -190,6 +197,98 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
       () -> messageProcessor.accept(new Event<>(UPDATE, 20, invalid)));
 
     client.put().uri("/product/21").bodyValue(update)
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+  }
+
+
+  private static final String CART_OWNER =
+      "000000000000000000000000000000000000000000000000000000000000000a";
+  private static final String OTHER_OWNER =
+      "000000000000000000000000000000000000000000000000000000000000000b";
+
+  @Test
+  void cartIsOwnerScopedAndDoesNotReserveInventory() {
+    Product product = new Product(77, "Camera bag", 1, null);
+    product.setStockQuantity(5);
+    product.setPrice(new java.math.BigDecimal("19.99"));
+    product.setCurrency("USD");
+    messageProcessor.accept(new Event<>(CREATE, 77, product));
+
+    client.put().uri("/internal/carts/" + CART_OWNER + "/items/77")
+      .contentType(APPLICATION_JSON).bodyValue(new QuantityRequest(3))
+      .exchange().expectStatus().isOk()
+      .expectBody()
+      .jsonPath("$.items[0].quantity").isEqualTo(3)
+      .jsonPath("$.items[0].name").isEqualTo("Camera bag")
+      .jsonPath("$.items[0].unitPrice").isEqualTo(19.99);
+
+    client.get().uri("/internal/carts/" + OTHER_OWNER)
+      .exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.items.length()").isEqualTo(0);
+
+    client.get().uri("/internal/inventory/77")
+      .exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.available").isEqualTo(5);
+
+    client.delete().uri("/internal/carts/" + CART_OWNER + "/items/77")
+      .exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.items.length()").isEqualTo(0);
+  }
+
+  @Test
+  void cartRejectsMissingProductAndInvalidQuantities() {
+    client.put().uri("/internal/carts/" + CART_OWNER + "/items/999")
+      .contentType(APPLICATION_JSON).bodyValue(new QuantityRequest(1))
+      .exchange().expectStatus().isEqualTo(NOT_FOUND);
+
+    Product product = new Product(78, "T-shirt", 1, null);
+    product.setStockQuantity(2);
+    messageProcessor.accept(new Event<>(CREATE, 78, product));
+
+    for (int invalidQuantity : new int[] {0, 3, 100}) {
+      client.put().uri("/internal/carts/" + CART_OWNER + "/items/78")
+        .contentType(APPLICATION_JSON).bodyValue(new QuantityRequest(invalidQuantity))
+        .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    }
+    client.get().uri("/internal/carts/" + CART_OWNER)
+      .exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.items.length()").isEqualTo(0);
+  }
+
+  @Test
+  void stockAdjustmentsNeverProduceNegativeInventory() {
+    Product product = new Product(79, "Monitor", 5, null);
+    product.setStockQuantity(3);
+    messageProcessor.accept(new Event<>(CREATE, 79, product));
+
+    client.post().uri("/internal/inventory/79/adjustments")
+      .contentType(APPLICATION_JSON).bodyValue(new StockAdjustment(-2))
+      .exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.available").isEqualTo(1);
+
+    client.post().uri("/internal/inventory/79/adjustments")
+      .contentType(APPLICATION_JSON).bodyValue(new StockAdjustment(-2))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+
+    client.post().uri("/internal/inventory/79/adjustments")
+      .contentType(APPLICATION_JSON).bodyValue(new StockAdjustment(4))
+      .exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.available").isEqualTo(5);
+
+    client.get().uri("/product/79")
+      .exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.stockQuantity").isEqualTo(5);
+  }
+
+  @Test
+  void stockRequiresAnInitializedQuantity() {
+    sendCreateProductEvent(80);
+
+    client.get().uri("/internal/inventory/80")
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+
+    client.post().uri("/internal/inventory/80/adjustments")
+      .contentType(APPLICATION_JSON).bodyValue(new StockAdjustment(5))
       .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
   }
 

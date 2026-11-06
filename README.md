@@ -88,3 +88,52 @@ This is catalog metadata only: stockQuantity is **not** reserved inventory,
 SKU is not yet enforced unique, and price changes do not implement checkout,
 tax, or currency conversion. Validation and event-delivery guarantees must be
 verified before deploying.
+
+## Shopping cart and inventory (Phase 1, draft)
+
+These endpoints use the existing `/product-composite/**` Gateway route.
+JWT scopes for the demo authorization server:
+
+- `cart:read` — view the signed-in user's cart
+- `cart:write` — set or remove the signed-in user's cart items
+- `inventory:read` — inspect the available stock of a product
+- `inventory:write` — privileged, atomic stock adjustments
+
+Example routes (send `Authorization: Bearer <signed-in-user-access-token>`):
+
+```http
+GET /product-composite/cart
+PUT /product-composite/cart/items/77
+Content-Type: application/json
+
+{"quantity":3}
+```
+
+```http
+DELETE /product-composite/cart/items/77
+GET /product-composite/inventory/77
+POST /product-composite/inventory/77/adjustments
+Content-Type: application/json
+
+{"delta":-2}
+```
+
+Cart persistence uses MongoDB `shopping_carts` documents with optimistic
+concurrency retries and at most 50 distinct products, each with quantity
+1–99. The server hashes the verified token issuer and user subject to derive
+cart identity; clients cannot supply an owner ID. App-only (client-credentials)
+tokens cannot access personal carts. The internal `/internal/**` endpoints
+must never be exposed to public clients or trusted proxies.
+
+**Important limitations:** A cart does not reserve stock. Price and product
+name in the cart are *display-only snapshots* and must be revalidated at
+checkout. Inventory adjustments are single-document atomic increments with
+nonnegative-stock checks, not transactionally durable reservations or
+idempotent order deductions. Do not use stock adjustment as a payment or
+checkout API. Old products with null stock must be initialized before
+they can enter a cart.
+
+This phase does not implement user registration, order placement, checkout,
+payments, reservation expiration or stock ledger/idempotency. Before
+production, create a dedicated inventory/order flow with reservation IDs,
+expiry, and audit records. Full Gradle/Docker tests are still required.
