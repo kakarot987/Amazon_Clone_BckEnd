@@ -1,174 +1,116 @@
-version: '2.1'
-
 services:
-#  product:
-#    build: microservices/product-service
-#    mem_limit: 512m
-#    environment:
-#      - SPRING_PROFILES_ACTIVE=docker
-#      - CONFIG_SERVER_USR=${CONFIG_SERVER_USR}
-#      - CONFIG_SERVER_PWD=${CONFIG_SERVER_PWD}
-#    depends_on:
-#      mongodb:
-#        condition: service_healthy
-#      rabbitmq:
-#        condition: service_healthy
+  mongodb:
+    image: mongo:6.0
+    networks: [backend]
+    volumes: [mongo-data:/data/db]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
 
-#  recommendation:
-#    build: microservices/recommendation-service
-#    mem_limit: 512m
-#    environment:
-#      - SPRING_PROFILES_ACTIVE=docker
-#      - CONFIG_SERVER_USR=${CONFIG_SERVER_USR}
-#      - CONFIG_SERVER_PWD=${CONFIG_SERVER_PWD}
-#    depends_on:
-#      mongodb:
-#        condition: service_healthy
-#      rabbitmq:
-#        condition: service_healthy
-
-#  review:
-#    build: microservices/review-service
-#    mem_limit: 512m
-#    environment:
-#      - SPRING_PROFILES_ACTIVE=docker
-#      - CONFIG_SERVER_USR=${CONFIG_SERVER_USR}
-#      - CONFIG_SERVER_PWD=${CONFIG_SERVER_PWD}
-#    depends_on:
-#      mysql:
-#        condition: service_healthy
-#      rabbitmq:
-#        condition: service_healthy
-
-#  product-composite:
-#    build: microservices/product-composite-service
-#    mem_limit: 512m
-#    environment:
-#      - SPRING_PROFILES_ACTIVE=docker
-#      - CONFIG_SERVER_USR=${CONFIG_SERVER_USR}
-#      - CONFIG_SERVER_PWD=${CONFIG_SERVER_PWD}
-#    depends_on:
-#      rabbitmq:
-#        condition: service_healthy
-#      auth-server:
-#        condition: service_healthy
-
-#  mongodb:
-#    image: mongo:6.0.4
-#    mem_limit: 512m
-#    ports:
-#      - "27017:27017"
-#    command: mongod
-#    healthcheck:
-#      test: "mongostat -n 1"
-#      interval: 5s
-#      timeout: 2s
-#      retries: 60
-#
-#  mysql:
-#    image: mysql:8.0.32
-#    mem_limit: 512m
-#    ports:
-#      - "3306:3306"
-#    environment:
-#      - MYSQL_ROOT_PASSWORD=rootpwd
-#      - MYSQL_DATABASE=review-db
-#      - MYSQL_USER=user
-#      - MYSQL_PASSWORD=pwd
-#    healthcheck:
-#      test: "/usr/bin/mysql --user=user --password=pwd --execute \"SHOW DATABASES;\""
-#      interval: 5s
-#      timeout: 2s
-#      retries: 60
+  mysql:
+    image: mysql:8.0
+    networks: [backend]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: review-db
+      MYSQL_USER: user
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
+    volumes: [mysql-data:/var/lib/mysql]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
 
   rabbitmq:
-    image: rabbitmq:3.11.8-management
-    mem_limit: 512m
-    networks:
-      - my-network
-    ports:
-      - 5672:5672
-      - 15672:15672
+    image: rabbitmq:3.13-management
+    networks: [backend]
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
     healthcheck:
-      test: ["CMD", "rabbitmqctl", "status"]
-      interval: 5s
-      timeout: 2s
-      retries: 60
-
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
 
   config-server:
     build: spring-cloud/config-server
-    mem_limit: 512m
-    networks:
-      - my-network
+    networks: [backend]
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - ENCRYPT_KEY=my-very-secure-encrypt-key
-      - SPRING_SECURITY_USER_NAME=root
-      - SPRING_SECURITY_USER_PASSWORD=root
-    volumes:
-      - $PWD/config-repo:/config-repo
-    ports:
-      - "8888:8888"
-
+      CONFIG_GIT_URI: ${CONFIG_GIT_URI:-https://github.com/kakarot987/config-repo.git}
+      CONFIG_GIT_USERNAME: ${CONFIG_GIT_USERNAME:-}
+      CONFIG_GIT_TOKEN: ${CONFIG_GIT_TOKEN:-}
+      SPRING_SECURITY_USER_NAME: ${CONFIG_SERVER_USR:?Set CONFIG_SERVER_USR in .env}
+      SPRING_SECURITY_USER_PASSWORD: ${CONFIG_SERVER_PWD:?Set CONFIG_SERVER_PWD in .env}
+    ports: ["127.0.0.1:8888:8888"]
 
   eureka:
     build: spring-cloud/eureka-server
-    mem_limit: 512m
-    networks:
-      - my-network
-    environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - ENCRYPT_KEY=my-very-secure-encrypt-key
-      - CONFIG_SERVER_USR=root
-      - CONFIG_SERVER_PWD=root
-    ports:
-      - "8761:8761"
-
-  gateway:
-    build: spring-cloud/gateway
-    mem_limit: 512m
-    networks:
-      - my-network
-    environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - CONFIG_SERVER_USR=root
-      - CONFIG_SERVER_PWD=root
-    ports:
-      - "8443:8443"
-#    depends_on:
-#      auth-server:
-#        condition: service_healthy
+    networks: [backend]
+    environment: &service-env
+      SPRING_PROFILES_ACTIVE: docker
+      CONFIG_SERVER_URL: http://config-server:8888
+      CONFIG_SERVER_USR: ${CONFIG_SERVER_USR:?Set CONFIG_SERVER_USR in .env}
+      CONFIG_SERVER_PWD: ${CONFIG_SERVER_PWD:?Set CONFIG_SERVER_PWD in .env}
+    depends_on: [config-server]
+    ports: ["127.0.0.1:8761:8761"]
 
   auth-server:
     build: spring-cloud/authorization-server
-    mem_limit: 512m
-    networks:
-      - my-network
+    networks: [backend]
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - ENCRYPT_KEY=my-very-secure-encrypt-key
-      - CONFIG_SERVER_USR=root
-      - CONFIG_SERVER_PWD=root
-    healthcheck:
-      test: ["CMD", "curl", "-fs", "http://localhost:9999/actuator/health"]
-      interval: 5s
-      timeout: 2s
-      retries: 60
+      <<: *service-env
+      AUTH_WRITER_CLIENT_SECRET: ${AUTH_WRITER_CLIENT_SECRET:?Set AUTH_WRITER_CLIENT_SECRET in .env}
+      AUTH_READER_CLIENT_SECRET: ${AUTH_READER_CLIENT_SECRET:?Set AUTH_READER_CLIENT_SECRET in .env}
+      AUTH_DEMO_USER: ${AUTH_DEMO_USER:?Set AUTH_DEMO_USER in .env}
+      AUTH_DEMO_PASSWORD: ${AUTH_DEMO_PASSWORD:?Set AUTH_DEMO_PASSWORD in .env}
+    depends_on: [config-server, eureka]
 
+  product:
+    build: microservices/product-service
+    networks: [backend]
+    environment: *service-env
+    depends_on: [config-server, mongodb, rabbitmq, eureka]
 
+  recommendation:
+    build: microservices/recommendation-service
+    networks: [backend]
+    environment: *service-env
+    depends_on: [config-server, mongodb, rabbitmq, eureka]
+
+  review:
+    build: microservices/review-service
+    networks: [backend]
+    environment:
+      <<: *service-env
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
+    depends_on: [config-server, mysql, rabbitmq, eureka]
+
+  product-composite:
+    build: microservices/product-composite-service
+    networks: [backend]
+    environment: *service-env
+    depends_on: [config-server, rabbitmq, product, recommendation, review, auth-server]
+
+  gateway:
+    build: spring-cloud/gateway
+    networks: [backend]
+    environment: *service-env
+    ports: ["127.0.0.1:8443:8443"]
+    depends_on: [config-server, eureka, auth-server, product-composite]
 
   zipkin-server:
-    image: openzipkin/zipkin:2.24.0
-    restart: always
-    mem_limit: 1024m
-    networks:
-      - my-network
-    environment:
-      - STORAGE_TYPE=mem
-    ports:
-      - 9411:9411
+    image: openzipkin/zipkin:2.24
+    networks: [backend]
+    ports: ["127.0.0.1:9411:9411"]
 
 networks:
-  my-network:
+  backend:
     name: my-network
+
+volumes:
+  mongo-data:
+  mysql-data:

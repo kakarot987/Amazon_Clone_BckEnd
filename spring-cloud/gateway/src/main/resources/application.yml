@@ -7,7 +7,7 @@ spring:
 ---
 spring:
   config:
-    import: "configserver:http://localhost:8888"
+    import: "configserver:${CONFIG_SERVER_URL:http://localhost:8888}"
     activate:
       on-profile: native
   cloud:
@@ -19,8 +19,8 @@ spring:
         maxInterval: 10000
         maxAttempts: 20
       uri: http://localhost:8888
-      username: root
-      password: root
+      username: ${CONFIG_SERVER_USR}
+      password: ${CONFIG_SERVER_PWD}
 
 management:
   security:
@@ -30,7 +30,7 @@ management:
 
 spring:
   config:
-    import: "configserver:http://config-server:8888"
+    import: "configserver:${CONFIG_SERVER_URL:http://config-server:8888}"
     activate:
       on-profile: docker
   cloud:
@@ -42,5 +42,6 @@ spring:
         maxInterval: 10000
         maxAttempts: 20
       uri:  http://config-server:8888
-      username: root
-      password: root
+      username: ${CONFIG_SERVER_USR}
+      password: ${CONFIG_SERVER_PWD}
+spring.security.oauth2.resourceserver.jwt.issuer-uri: ${AUTH_ISSUER_URI:http://auth-server:9999}

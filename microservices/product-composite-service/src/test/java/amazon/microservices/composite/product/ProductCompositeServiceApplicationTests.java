@@ -65,7 +65,7 @@ public class ProductCompositeServiceApplicationTests {
 	void contextLoads() {
 	}
 
-//	@Test
+	@Test
 	void getProductById() {
 
 		getAndVerifyProduct(PRODUCT_ID_OK, OK)
@@ -74,7 +74,7 @@ public class ProductCompositeServiceApplicationTests {
 				.jsonPath("$.reviews.length()").isEqualTo(1);
 	}
 
-//	@Test
+	@Test
 	void getProductNotFound() {
 
 		getAndVerifyProduct(PRODUCT_ID_NOT_FOUND, NOT_FOUND)
@@ -82,7 +82,7 @@ public class ProductCompositeServiceApplicationTests {
 				.jsonPath("$.message").isEqualTo("NOT FOUND: " + PRODUCT_ID_NOT_FOUND);
 	}
 
-//	@Test
+	@Test
 	void getProductInvalidInput() {
 
 		getAndVerifyProduct(PRODUCT_ID_INVALID, UNPROCESSABLE_ENTITY)

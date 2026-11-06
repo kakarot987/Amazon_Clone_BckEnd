@@ -1,23 +1,22 @@
-spring.config.import: "configserver:http://localhost:8888:"
-
 spring:
-  application.name: product-composite
-  cloud.config:
-    failFast: true
-    retry:
-      initialInterval: 3000
-      multiplier: 1.3
-      maxInterval: 10000
-      maxAttempts: 20
-    uri: http://localhost:8888
-    username: ${CONFIG_SERVER_USR}
-    password: ${CONFIG_SERVER_PWD}
+  application:
+    name: product-composite
+  config:
+    import: "configserver:${CONFIG_SERVER_URL:http://localhost:8888}"
+  cloud:
+    config:
+      fail-fast: true
+      username: ${CONFIG_SERVER_USR}
+      password: ${CONFIG_SERVER_PWD}
+      retry:
+        initial-interval: 3000
+        multiplier: 1.3
+        max-interval: 10000
+        max-attempts: 20
 
-
-cloud:
-  compatibility-verifier:
-    enabled=false:
 ---
-spring.config.activate.on-profile: docker
-
-spring.config.import: "configserver:http://localhost:8888:"
+spring:
+  config:
+    activate:
+      on-profile: docker
+    import: "configserver:${CONFIG_SERVER_URL:http://config-server:8888}"
