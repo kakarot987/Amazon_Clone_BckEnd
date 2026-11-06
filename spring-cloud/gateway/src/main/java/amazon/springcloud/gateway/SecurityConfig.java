@@ -17,6 +17,9 @@ public class SecurityConfig {
                 .authorizeExchange(auth -> auth
                         .pathMatchers("/actuator/health", "/actuator/info").permitAll()
                         .pathMatchers("/oauth2/**", "/login/**", "/.well-known/**").permitAll()
+                        // This exception is authenticated with HMAC in the product service.
+                        .pathMatchers(org.springframework.http.HttpMethod.POST,
+                                "/product-composite/payments/mock-webhook").permitAll()
                         .anyExchange().authenticated())
                 .oauth2ResourceServer(oauth -> oauth.jwt(Customizer.withDefaults()))
                 .build();
