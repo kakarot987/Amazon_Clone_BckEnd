@@ -76,9 +76,12 @@ public class OrderRecoveryWorker {
         String status = order.getStatus();
         if (OrderEntity.PENDING.equals(status)
                 || OrderEntity.CANCELLATION_PENDING.equals(status)
-                || OrderEntity.EXPIRATION_PENDING.equals(status))
+                || OrderEntity.EXPIRATION_PENDING.equals(status)
+                || OrderEntity.PAYMENT_CONFIRMING.equals(status)
+                || OrderEntity.PAYMENT_FAILED_PENDING.equals(status))
             return true;
-        return OrderEntity.RESERVED.equals(status)
+        return (OrderEntity.RESERVED.equals(status)
+                || OrderEntity.PAYMENT_PENDING.equals(status))
                 && order.getExpiresAt() != null && !order.getExpiresAt().isAfter(now);
     }
 }
