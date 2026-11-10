@@ -4,8 +4,8 @@ Spring Boot 3.1 / Java 17 microservices prototype: product, reviews,
 recommendations, composite product API, Spring Cloud Config, Eureka,
 Gateway and OAuth2 authorization.
 
-> This is **not** a complete shopping platform. Cart, inventory, checkout,
-> payments, orders and customer accounts have not yet been implemented.
+> This is a **microservices prototype**, not a production commerce platform.
+> All payments, carrier tracking and fulfillment operations are simulated.
 
 ## Verified build tooling
 
@@ -331,3 +331,186 @@ refund/capture API, settlement, chargebacks, or multi-item checkout.
 Order and stock records remain separate Mongo documents with best-effort
 recovery. Real payment integration requires audited provider reconciliation,
 an outbox, idempotency storage and stronger transactional guarantees.
+
+## Complete simulated fulfillment & shipment tracking phase (draft)
+
+This phase adds **mock** shipping and tracking for the single-product,
+`MOCK_PAID` orders created in the earlier payment phase. It does **not**
+contact real shipping carriers, print shipping labels, allocate a warehouse,
+collect a physical address, charge a credit card or fulfill a real order.
+The destination is a simple 2–32-character *zone code*, not an address.
+
+### Separation of roles
+
+Customers use their normal signed-in user token with `order:read` scope
+to retrieve tracking. Operators use a **separate OAuth client** called
+`mock-fulfillment`, configured with `AUTH_FULFILLMENT_CLIENT_SECRET` in
+the ignored `.env`. Only this service client has `fulfillment:read`
+and `fulfillment:write` scopes; the existing `writer` and `reader`
+clients do not receive these permissions.
+
+Set a fresh, non-default `AUTH_FULFILLMENT_CLIENT_SECRET` in `.env`
+and recreate the `auth-server` container. For a development-only service
+token, from the host with auth-server reachable:
+
+```sh
+# Auth server may not be host-exposed; use a trusted internal client instead
+# or a port forward limited to localhost, never public port exposure.
+curl -u "mock-fulfillment:$AUTH_FULFILLMENT_CLIENT_SECRET" \
+  -d grant_type=client_credentials \
+  -d 'scope=fulfillment:read fulfillment:write' \
+  http://localhost:9999/oauth2/token
+```
+
+Do not put tokens in source control, shell history or CI logs. The example
+requires a localhost-accessible development auth-server; it is **not**
+configured for public access by default.
+
+### Routes (through authenticated API Gateway)
+
+| Role | Method | Path | Scope |
+|---|---|---|---|
+| Customer | GET | `/product-composite/orders/{orderId}/shipment` | `order:read` |
+| Operator | POST | `/product-composite/fulfillment/shipments` | `fulfillment:write` |
+| Operator | GET | `/product-composite/fulfillment/shipments/{orderId}` | `fulfillment:read` |
+| Operator | POST | `/product-composite/fulfillment/shipments/{orderId}/events` | `fulfillment:write` |
+
+Create a shipment for a **mock-paid** order only:
+
+```json
+{"orderId":"<64-character-order-id>","destinationZone":"NORTH_01"}
+```
+
+Repeat the same creation request safely; one shipment document is stored per
+order. A different zone on a replay is rejected.
+
+Advance a shipment sequentially with a unique event ID:
+
+```json
+{"eventId":"mock-event-0001","status":"PACKED"}
+```
+
+State machine:
+
+```text
+CREATED -> PACKED -> SHIPPED -> IN_TRANSIT -> DELIVERED
+```
+
+Skipping milestones, moving backward or changing a `DELIVERED` shipment is
+rejected. Repeating an event with the same ID and outcome is idempotent,
+including after later milestones; the history is persisted with timestamps
+and Mongo optimistic concurrency checks. A reused event ID with a different
+outcome is rejected. Tracking numbers are `MOCK-` prefixed placeholders,
+not carrier tracking numbers.
+
+An included standard-library Python simulator can create or advance events
+with an operator token:
+
+```sh
+export FULFILLMENT_ACCESS_TOKEN='<scoped-operator-access-token>'
+python3 scripts/simulate-shipment.py create --order-id '<order-id>' --zone NORTH_01
+python3 scripts/simulate-shipment.py advance --order-id '<order-id>' --status PACKED
+python3 scripts/simulate-shipment.py advance --order-id '<order-id>' --status SHIPPED
+python3 scripts/simulate-shipment.py advance --order-id '<order-id>' --status IN_TRANSIT
+python3 scripts/simulate-shipment.py advance --order-id '<order-id>' --status DELIVERED
+```
+
+A `MOCK_PAID` order cannot be cancelled using the existing unpaid-order
+cancellation endpoint. Tracking reads require verified JWT identity;
+a different customer cannot read another customer's shipment. Internal
+`/internal/shipments/**` endpoints must remain private to Docker networks.
+
+**Limitations:** No carrier API, physical pickup/delivery, refund, shipment
+failure/return process, address encryption, webhooks, inventory pick ledger,
+multi-item shipments, or payment fulfillment approval. The operator API is
+secured by the mock OAuth client and gateway scopes, not by an enterprise
+staff/warehouse identity service. Real commerce must use a dedicated
+fulfillment system, audited access controls, returns/refunds and tested
+delivery reconciliation. Run the Java 17 CI suite before merging.
+
+## Returns, simulated refunds and post-delivery management (draft)
+
+This phase builds on the simulated shipping workflow from PR #9. It supports
+**one return per delivered single-product order**, with a separate operator
+identity and full event history. **No real funds move**, no product is
+automatically restocked, and `MOCK_REFUNDED` has no financial meaning.
+
+### Eligibility and customer requests
+
+Only the signed-in order owner can request a return. The order must be
+`MOCK_PAID` and its mock shipment must have reached `DELIVERED`.
+Requests are accepted for 30 days after the recorded delivery by default,
+configured by `app.returns.window: P30D` in the product service. The
+reason must be one of `DAMAGED`, `WRONG_ITEM`, `NOT_AS_DESCRIBED`,
+or `NO_LONGER_NEEDED`. Free-text addresses and personal details are
+intentionally not accepted.
+
+```http
+POST /product-composite/orders/{orderId}/return
+Authorization: Bearer <signed-in-user-return-write-token>
+Content-Type: application/json
+
+{"reasonCode":"DAMAGED"}
+
+GET /product-composite/orders/{orderId}/return
+Authorization: Bearer <signed-in-user-return-read-token>
+```
+
+Repeated requests for the same order/reason return the existing record.
+Changing the reason after creation is rejected. A different customer cannot
+read or create a return on that order.
+
+### Operator decisions and mock refund
+
+A separate development OAuth2 client `mock-returns` holds
+`returns:read` / `returns:manage`. Set a unique
+`AUTH_RETURNS_CLIENT_SECRET` in your ignored `.env` file. Ordinary
+customer and catalog writer credentials cannot approve or refund returns.
+
+```http
+GET  /product-composite/returns/{orderId}
+POST /product-composite/returns/{orderId}/approve
+POST /product-composite/returns/{orderId}/reject
+POST /product-composite/returns/{orderId}/receive
+POST /product-composite/returns/{orderId}/mock-refund
+```
+
+Each operator action requires `Authorization: Bearer <returns-operator-token>`
+and a JSON body such as `{"eventId":"return-review-0001"}`. State
+transitions are:
+
+```text
+REQUESTED -> APPROVED -> RECEIVED -> MOCK_REFUNDED
+          -> REJECTED
+```
+
+Refund amount is taken from the original paid order's stored unit price
+and quantity (not cart display values). Repeating the same event ID and
+action does not duplicate a ledger entry; using the same ID for another
+transition is rejected. The complete timestamped history is persisted with
+the return record using optimistic locking and retries on conflicts.
+
+A standard-library simulator is provided:
+
+```sh
+export RETURNS_ACCESS_TOKEN='<scoped-mock-returns-operator-token>'
+python3 scripts/simulate-return.py --order-id '<order-id>' --action approve
+python3 scripts/simulate-return.py --order-id '<order-id>' --action receive
+python3 scripts/simulate-return.py --order-id '<order-id>' --action mock-refund
+```
+
+**Limitations:** The refund is a simulated state transition, not a payment
+processor refund. A real integration would need provider refund IDs,
+reconciliation, immutable audit records, monetary rounding/tax policy,
+returns shipping labels, warehouse inspection, inventory restocking policy,
+fraud checks, privacy protections and staff-level authorization. Returned
+items are **not** automatically added to available stock.
+
+### Merge verification
+
+This PR also brings the shipment files from merged PR #9 onto `main`:
+PR #9 had been merged into PR #8's branch *after* PR #8 was merged into
+`main`, so its shipping changes did not appear on `main`. The new
+branch is based directly on `main` and includes both the shipping code
+and this complete mock returns phase. Run `gradle clean build` and
+Docker end-to-end checks before merging.

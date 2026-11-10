@@ -5,6 +5,14 @@ import amazon.api.event.Event;
 import amazon.microservices.core.product.persistence.ProductRepository;
 import amazon.microservices.core.product.persistence.CartRepository;
 import amazon.microservices.core.product.persistence.OrderRepository;
+import amazon.microservices.core.product.persistence.ShipmentRepository;
+import amazon.microservices.core.product.persistence.ReturnRepository;
+import amazon.microservices.core.product.persistence.ShipmentEntity;
+import amazon.api.commerce.ShipmentEvent;
+import amazon.api.commerce.ReturnRequest;
+import amazon.api.commerce.ReturnAction;
+import amazon.api.commerce.CreateShipmentRequest;
+import amazon.api.commerce.ShipmentStatusUpdate;
 import amazon.microservices.core.product.persistence.OrderEntity;
 import amazon.microservices.core.product.services.OrderRecoveryWorker;
 import java.time.Instant;
@@ -54,6 +62,12 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
   private OrderRepository orderRepository;
 
   @Autowired
+  private ShipmentRepository shipmentRepository;
+
+  @Autowired
+  private ReturnRepository returnRepository;
+
+  @Autowired
   private OrderRecoveryWorker recoveryWorker;
 
   @Autowired
@@ -65,6 +79,8 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
     repository.deleteAll().block();
     cartRepository.deleteAll().block();
     orderRepository.deleteAll().block();
+    shipmentRepository.deleteAll().block();
+    returnRepository.deleteAll().block();
   }
 
   @Test
@@ -617,6 +633,225 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
       .header("X-Mock-Signature", paymentSignature(timestamp, body))
       .contentType(APPLICATION_JSON).bodyValue(body.getBytes(StandardCharsets.UTF_8))
       .exchange();
+  }
+
+
+  @Test
+  void mockShipmentRequiresPaidOrderAndIsIdempotent() {
+    String orderId = String.format("%064x", 901);
+    OrderEntity reserved = new OrderEntity(orderId, CART_OWNER, 901, 1,
+        "Simulated parcel", new java.math.BigDecimal("42.00"), "USD");
+    reserved.setStatus(OrderEntity.RESERVED);
+    orderRepository.save(reserved).block();
+
+    client.post().uri("/internal/shipments")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new CreateShipmentRequest(orderId, "NORTH_01"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+
+    OrderEntity paid = orderRepository.findById(orderId).block();
+    paid.setStatus(OrderEntity.MOCK_PAID);
+    orderRepository.save(paid).block();
+
+    for (int i = 0; i < 2; i++) {
+      client.post().uri("/internal/shipments")
+        .contentType(APPLICATION_JSON)
+        .bodyValue(new CreateShipmentRequest(orderId, "NORTH_01"))
+        .exchange().expectStatus().isOk().expectBody()
+        .jsonPath("$.status").isEqualTo("CREATED")
+        .jsonPath("$.carrier").isEqualTo("MOCK_CARRIER")
+        .jsonPath("$.history.length()").isEqualTo(1);
+    }
+    assertEquals(1L, (long) shipmentRepository.count().block());
+
+    client.post().uri("/internal/shipments")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new CreateShipmentRequest(orderId, "SOUTH_02"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+
+    client.post().uri("/internal/orders/" + CART_OWNER + "/" + orderId + "/cancel")
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+  }
+
+  @Test
+  void trackingTransitionsAreOrderedAuditableAndReplaySafe() {
+    String orderId = String.format("%064x", 902);
+    OrderEntity paid = new OrderEntity(orderId, CART_OWNER, 902, 2,
+        "Simulated keyboard", new java.math.BigDecimal("12.00"), "USD");
+    paid.setStatus(OrderEntity.MOCK_PAID);
+    orderRepository.save(paid).block();
+
+    client.post().uri("/internal/shipments")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new CreateShipmentRequest(orderId, "EU_CENTRAL"))
+      .exchange().expectStatus().isOk();
+
+    client.post().uri("/internal/shipments/" + orderId + "/events")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new ShipmentStatusUpdate("event-shipped-902", "SHIPPED"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+
+    String[] statuses = {"PACKED", "SHIPPED", "IN_TRANSIT", "DELIVERED"};
+    for (int i = 0; i < statuses.length; i++) {
+      String eventId = "event-902-" + (i + 1);
+      for (int retry = 0; retry < 2; retry++) {
+        client.post().uri("/internal/shipments/" + orderId + "/events")
+          .contentType(APPLICATION_JSON)
+          .bodyValue(new ShipmentStatusUpdate(eventId, statuses[i]))
+          .exchange().expectStatus().isOk()
+          .expectBody().jsonPath("$.status").isEqualTo(statuses[i])
+          .jsonPath("$.history.length()").isEqualTo(i + 2);
+      }
+    }
+
+    client.post().uri("/internal/shipments/" + orderId + "/events")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new ShipmentStatusUpdate("event-902-2", "PACKED"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.post().uri("/internal/shipments/" + orderId + "/events")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new ShipmentStatusUpdate("event-902-5", "PACKED"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.post().uri("/internal/shipments/" + orderId + "/events")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new ShipmentStatusUpdate("event-902-6", null))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+
+    client.get().uri("/internal/shipments/owner/" + CART_OWNER + "/order/" + orderId)
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.status").isEqualTo("DELIVERED")
+      .jsonPath("$.history.length()").isEqualTo(5);
+    client.get().uri("/internal/shipments/owner/" + OTHER_OWNER + "/order/" + orderId)
+      .exchange().expectStatus().isEqualTo(NOT_FOUND);
+    assertEquals(OrderEntity.MOCK_PAID,
+        orderRepository.findById(orderId).block().getStatus());
+  }
+
+  @Test
+  void nonexistentShipmentAndInvalidDestinationAreRejected() {
+    String orderId = String.format("%064x", 903);
+    client.post().uri("/internal/shipments")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new CreateShipmentRequest(orderId, "ZONE_03"))
+      .exchange().expectStatus().isEqualTo(NOT_FOUND);
+
+    OrderEntity paid = new OrderEntity(orderId, CART_OWNER, 903, 1,
+        "Simulated item", new java.math.BigDecimal("9.00"), "USD");
+    paid.setStatus(OrderEntity.MOCK_PAID);
+    orderRepository.save(paid).block();
+
+    client.post().uri("/internal/shipments")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new CreateShipmentRequest(orderId, "street address / private location"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.get().uri("/internal/shipments/owner/" + CART_OWNER + "/order/" + orderId)
+      .exchange().expectStatus().isEqualTo(NOT_FOUND);
+  }
+
+
+  private String deliveredMockPaidOrder(int suffix, String owner, int stock) {
+    String id = String.format("%064x", suffix);
+    OrderEntity order = new OrderEntity(id, owner, suffix, 2, "Mock delivered item",
+        new java.math.BigDecimal("12.50"), "USD");
+    order.setStatus(OrderEntity.MOCK_PAID);
+    orderRepository.save(order).block();
+    ShipmentEntity shipment = new ShipmentEntity(id, "NORTH_01", "MOCK-TEST");
+    shipment.setStatus("DELIVERED");
+    java.util.List<ShipmentEvent> history = new java.util.ArrayList<>(shipment.getHistory());
+    history.add(new ShipmentEvent("delivery-event-" + suffix, "DELIVERED", Instant.now()));
+    shipment.setHistory(history);
+    shipmentRepository.save(shipment).block();
+    return id;
+  }
+
+  @Test
+  void returnLifecycleIsIdempotentAndDoesNotModifyInventory() {
+    String orderId = deliveredMockPaidOrder(981, CART_OWNER, 10);
+    String customer = "/internal/returns/owner/" + CART_OWNER + "/order/" + orderId;
+    String operator = "/internal/returns/" + orderId;
+
+    for (int i = 0; i < 2; i++) {
+      client.post().uri(customer).contentType(APPLICATION_JSON)
+        .bodyValue(new ReturnRequest("DAMAGED"))
+        .exchange().expectStatus().isOk().expectBody()
+        .jsonPath("$.state").isEqualTo("REQUESTED")
+        .jsonPath("$.refundAmount").isEqualTo(25.0)
+        .jsonPath("$.history.length()").isEqualTo(1);
+    }
+    assertEquals(1L, (long) returnRepository.count().block());
+
+    String[] actions = {"approve", "receive", "mock-refund"};
+    String[] states = {"APPROVED", "RECEIVED", "MOCK_REFUNDED"};
+    for (int i = 0; i < actions.length; i++) {
+      String eventId = "return-event-" + (981 + i);
+      for (int replay = 0; replay < 2; replay++) {
+        client.post().uri(operator + "/" + actions[i])
+          .contentType(APPLICATION_JSON).bodyValue(new ReturnAction(eventId))
+          .exchange().expectStatus().isOk().expectBody()
+          .jsonPath("$.state").isEqualTo(states[i])
+          .jsonPath("$.history.length()").isEqualTo(i + 2);
+      }
+    }
+    client.get().uri(customer).exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.state").isEqualTo("MOCK_REFUNDED");
+    client.get().uri("/internal/returns/owner/" + OTHER_OWNER + "/order/" + orderId)
+      .exchange().expectStatus().isEqualTo(NOT_FOUND);
+    assertEquals(OrderEntity.MOCK_PAID, orderRepository.findById(orderId).block().getStatus());
+  }
+
+  @Test
+  void returnTransitionsEnforceOrderAndRejectConflictingEvents() {
+    String id = deliveredMockPaidOrder(982, CART_OWNER, 1);
+    String customer = "/internal/returns/owner/" + CART_OWNER + "/order/" + id;
+    String operator = "/internal/returns/" + id;
+    client.post().uri(customer).contentType(APPLICATION_JSON)
+      .bodyValue(new ReturnRequest("WRONG_ITEM")).exchange().expectStatus().isOk();
+
+    client.post().uri(operator + "/receive").contentType(APPLICATION_JSON)
+      .bodyValue(new ReturnAction("return-early-982"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.post().uri(operator + "/mock-refund").contentType(APPLICATION_JSON)
+      .bodyValue(new ReturnAction("return-early-983"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+
+    client.post().uri(operator + "/reject").contentType(APPLICATION_JSON)
+      .bodyValue(new ReturnAction("return-reject-982"))
+      .exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.state").isEqualTo("REJECTED");
+
+    client.post().uri(operator + "/approve").contentType(APPLICATION_JSON)
+      .bodyValue(new ReturnAction("return-approve-982"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.post().uri(operator + "/approve").contentType(APPLICATION_JSON)
+      .bodyValue(new ReturnAction("return-reject-982"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.post().uri(customer).contentType(APPLICATION_JSON)
+      .bodyValue(new ReturnRequest("DAMAGED"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+  }
+
+  @Test
+  void returnRequiresDeliveryAndRejectsOtherOwners() {
+    String orderId = String.format("%064x", 983);
+    OrderEntity pending = new OrderEntity(orderId, CART_OWNER, 983, 1,
+      "Undelivered item", new java.math.BigDecimal("2.00"), "USD");
+    pending.setStatus(OrderEntity.MOCK_PAID);
+    orderRepository.save(pending).block();
+    client.post().uri("/internal/returns/owner/" + CART_OWNER + "/order/" + orderId)
+      .contentType(APPLICATION_JSON).bodyValue(new ReturnRequest("DAMAGED"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.post().uri("/internal/returns/owner/" + OTHER_OWNER + "/order/" + orderId)
+      .contentType(APPLICATION_JSON).bodyValue(new ReturnRequest("DAMAGED"))
+      .exchange().expectStatus().isEqualTo(NOT_FOUND);
+
+    ShipmentEntity notDelivered = new ShipmentEntity(orderId, "ZONE_1", "MOCK-TEST");
+    shipmentRepository.save(notDelivered).block();
+    client.post().uri("/internal/returns/owner/" + CART_OWNER + "/order/" + orderId)
+      .contentType(APPLICATION_JSON).bodyValue(new ReturnRequest("DAMAGED"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.post().uri("/internal/returns/owner/" + CART_OWNER + "/order/" + orderId)
+      .contentType(APPLICATION_JSON).bodyValue(new ReturnRequest("arbitrary free-text PII"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
   }
 
   private void sendCreateProductEvent(int productId) {

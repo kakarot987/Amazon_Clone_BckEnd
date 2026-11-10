@@ -108,6 +108,8 @@ public class AuthorizationServerConfig {
   public RegisteredClientRepository registeredClientRepository(
       @Value("${AUTH_WRITER_CLIENT_SECRET}") String writerClientSecret,
       @Value("${AUTH_READER_CLIENT_SECRET}") String readerClientSecret,
+      @Value("${AUTH_FULFILLMENT_CLIENT_SECRET}") String fulfillmentClientSecret,
+      @Value("${AUTH_RETURNS_CLIENT_SECRET}") String returnsClientSecret,
       PasswordEncoder passwordEncoder) {
     RegisteredClient writerClient = RegisteredClient.withId(UUID.randomUUID().toString())
       .clientId("writer")
@@ -125,6 +127,8 @@ public class AuthorizationServerConfig {
       .scope("cart:write")
       .scope("order:read")
       .scope("order:write")
+      .scope("return:read")
+      .scope("return:write")
       .scope("inventory:read")
       .scope("inventory:write")
       .clientSettings(ClientSettings.builder().requireAuthorizationConsent(true).build())
@@ -144,12 +148,36 @@ public class AuthorizationServerConfig {
       .scope("product:read")
       .scope("cart:read")
       .scope("order:read")
+      .scope("return:read")
       .scope("inventory:read")
       .clientSettings(ClientSettings.builder().requireAuthorizationConsent(true).build())
       .tokenSettings(TokenSettings.builder().accessTokenTimeToLive(Duration.ofHours(1)).build())
       .build();
 
-    return new InMemoryRegisteredClientRepository(writerClient, readerClient);
+    // Separate service identity: only this client can update mock shipment
+    // milestones. Customer/writer client tokens have no fulfillment:write scope.
+    RegisteredClient fulfillmentClient = RegisteredClient.withId(UUID.randomUUID().toString())
+      .clientId("mock-fulfillment")
+      .clientSecret(passwordEncoder.encode(fulfillmentClientSecret))
+      .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+      .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+      .scope("fulfillment:read")
+      .scope("fulfillment:write")
+      .tokenSettings(TokenSettings.builder().accessTokenTimeToLive(Duration.ofMinutes(15)).build())
+      .build();
+
+        // Restricted mock returns operator, separate from customer and fulfillment clients.
+    RegisteredClient returnsClient = RegisteredClient.withId(UUID.randomUUID().toString())
+      .clientId("mock-returns")
+      .clientSecret(passwordEncoder.encode(returnsClientSecret))
+      .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+      .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+      .scope("returns:read")
+      .scope("returns:manage")
+      .tokenSettings(TokenSettings.builder().accessTokenTimeToLive(Duration.ofMinutes(15)).build())
+      .build();
+
+    return new InMemoryRegisteredClientRepository(writerClient, readerClient, fulfillmentClient, returnsClient);
 
   }
 
