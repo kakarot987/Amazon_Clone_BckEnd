@@ -13,8 +13,8 @@ public abstract class MongoDbTestBase {
   
   @DynamicPropertySource
   static void setProperties(DynamicPropertyRegistry registry) {
-    registry.add("spring.data.mongodb.host", database::getContainerIpAddress);
-    registry.add("spring.data.mongodb.port", () -> database.getMappedPort(27017));
-    registry.add("spring.data.mongodb.database", () -> "test");
+    // MongoDBContainer initializes a replica set; transactions must be
+    // exercised in CI, not silently bypassed on a standalone server.
+    registry.add("spring.data.mongodb.uri", () -> database.getReplicaSetUrl("test"));
   }
 }
