@@ -5,6 +5,9 @@ import amazon.api.event.Event;
 import amazon.microservices.core.product.persistence.ProductRepository;
 import amazon.microservices.core.product.persistence.CartRepository;
 import amazon.microservices.core.product.persistence.OrderRepository;
+import amazon.microservices.core.product.persistence.ShipmentRepository;
+import amazon.api.commerce.CreateShipmentRequest;
+import amazon.api.commerce.ShipmentStatusUpdate;
 import amazon.microservices.core.product.persistence.OrderEntity;
 import amazon.microservices.core.product.services.OrderRecoveryWorker;
 import java.time.Instant;
@@ -54,6 +57,9 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
   private OrderRepository orderRepository;
 
   @Autowired
+  private ShipmentRepository shipmentRepository;
+
+  @Autowired
   private OrderRecoveryWorker recoveryWorker;
 
   @Autowired
@@ -65,6 +71,7 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
     repository.deleteAll().block();
     cartRepository.deleteAll().block();
     orderRepository.deleteAll().block();
+    shipmentRepository.deleteAll().block();
   }
 
   @Test
@@ -617,6 +624,119 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
       .header("X-Mock-Signature", paymentSignature(timestamp, body))
       .contentType(APPLICATION_JSON).bodyValue(body.getBytes(StandardCharsets.UTF_8))
       .exchange();
+  }
+
+
+  @Test
+  void mockShipmentRequiresPaidOrderAndIsIdempotent() {
+    String orderId = String.format("%064x", 901);
+    OrderEntity reserved = new OrderEntity(orderId, CART_OWNER, 901, 1,
+        "Simulated parcel", new java.math.BigDecimal("42.00"), "USD");
+    reserved.setStatus(OrderEntity.RESERVED);
+    orderRepository.save(reserved).block();
+
+    client.post().uri("/internal/shipments")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new CreateShipmentRequest(orderId, "NORTH_01"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+
+    OrderEntity paid = orderRepository.findById(orderId).block();
+    paid.setStatus(OrderEntity.MOCK_PAID);
+    orderRepository.save(paid).block();
+
+    for (int i = 0; i < 2; i++) {
+      client.post().uri("/internal/shipments")
+        .contentType(APPLICATION_JSON)
+        .bodyValue(new CreateShipmentRequest(orderId, "NORTH_01"))
+        .exchange().expectStatus().isOk().expectBody()
+        .jsonPath("$.status").isEqualTo("CREATED")
+        .jsonPath("$.carrier").isEqualTo("MOCK_CARRIER")
+        .jsonPath("$.history.length()").isEqualTo(1);
+    }
+    assertEquals(1L, (long) shipmentRepository.count().block());
+
+    client.post().uri("/internal/shipments")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new CreateShipmentRequest(orderId, "SOUTH_02"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+
+    client.post().uri("/internal/orders/" + CART_OWNER + "/" + orderId + "/cancel")
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+  }
+
+  @Test
+  void trackingTransitionsAreOrderedAuditableAndReplaySafe() {
+    String orderId = String.format("%064x", 902);
+    OrderEntity paid = new OrderEntity(orderId, CART_OWNER, 902, 2,
+        "Simulated keyboard", new java.math.BigDecimal("12.00"), "USD");
+    paid.setStatus(OrderEntity.MOCK_PAID);
+    orderRepository.save(paid).block();
+
+    client.post().uri("/internal/shipments")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new CreateShipmentRequest(orderId, "EU_CENTRAL"))
+      .exchange().expectStatus().isOk();
+
+    client.post().uri("/internal/shipments/" + orderId + "/events")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new ShipmentStatusUpdate("event-shipped-902", "SHIPPED"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+
+    String[] statuses = {"PACKED", "SHIPPED", "IN_TRANSIT", "DELIVERED"};
+    for (int i = 0; i < statuses.length; i++) {
+      String eventId = "event-902-" + (i + 1);
+      for (int retry = 0; retry < 2; retry++) {
+        client.post().uri("/internal/shipments/" + orderId + "/events")
+          .contentType(APPLICATION_JSON)
+          .bodyValue(new ShipmentStatusUpdate(eventId, statuses[i]))
+          .exchange().expectStatus().isOk()
+          .expectBody().jsonPath("$.status").isEqualTo(statuses[i])
+          .jsonPath("$.history.length()").isEqualTo(i + 2);
+      }
+    }
+
+    client.post().uri("/internal/shipments/" + orderId + "/events")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new ShipmentStatusUpdate("event-902-2", "PACKED"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.post().uri("/internal/shipments/" + orderId + "/events")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new ShipmentStatusUpdate("event-902-5", "PACKED"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.post().uri("/internal/shipments/" + orderId + "/events")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new ShipmentStatusUpdate("event-902-6", null))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+
+    client.get().uri("/internal/shipments/owner/" + CART_OWNER + "/order/" + orderId)
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.status").isEqualTo("DELIVERED")
+      .jsonPath("$.history.length()").isEqualTo(5);
+    client.get().uri("/internal/shipments/owner/" + OTHER_OWNER + "/order/" + orderId)
+      .exchange().expectStatus().isEqualTo(NOT_FOUND);
+    assertEquals(OrderEntity.MOCK_PAID,
+        orderRepository.findById(orderId).block().getStatus());
+  }
+
+  @Test
+  void nonexistentShipmentAndInvalidDestinationAreRejected() {
+    String orderId = String.format("%064x", 903);
+    client.post().uri("/internal/shipments")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new CreateShipmentRequest(orderId, "ZONE_03"))
+      .exchange().expectStatus().isEqualTo(NOT_FOUND);
+
+    OrderEntity paid = new OrderEntity(orderId, CART_OWNER, 903, 1,
+        "Simulated item", new java.math.BigDecimal("9.00"), "USD");
+    paid.setStatus(OrderEntity.MOCK_PAID);
+    orderRepository.save(paid).block();
+
+    client.post().uri("/internal/shipments")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new CreateShipmentRequest(orderId, "street address / private location"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.get().uri("/internal/shipments/owner/" + CART_OWNER + "/order/" + orderId)
+      .exchange().expectStatus().isEqualTo(NOT_FOUND);
   }
 
   private void sendCreateProductEvent(int productId) {
