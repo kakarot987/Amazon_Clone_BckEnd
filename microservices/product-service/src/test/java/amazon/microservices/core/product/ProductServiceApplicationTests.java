@@ -948,6 +948,66 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
     assertEquals(0L, (long) cartRepository.count().block());
   }
 
+
+  @Test
+  void catalogDiscoveryFiltersInStockSortsAndEscapesLiteralSearch() {
+    Product p1 = new Product(301, "Laptop 16", 2, null);
+    p1.setCategory("computers");
+    p1.setStockQuantity(2);
+    Product p2 = new Product(302, "Laptop 14", 2, null);
+    p2.setCategory("computers");
+    p2.setStockQuantity(0);
+    Product p3 = new Product(303, "Laptop Pro", 2, null);
+    p3.setCategory("computers");
+    p3.setStockQuantity(5);
+    Product p4 = new Product(304, "Tablet", 1, null);
+    p4.setCategory("electronics");
+    p4.setStockQuantity(3);
+    for (Product p : java.util.List.of(p1, p2, p3, p4))
+      messageProcessor.accept(new Event<>(CREATE, p.getProductId(), p));
+
+    client.get().uri("/products?query=laptop&category=computers&inStock=true&sort=stockDesc&size=10")
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.totalElements").isEqualTo(2)
+      .jsonPath("$.products[0].productId").isEqualTo(303)
+      .jsonPath("$.products[1].productId").isEqualTo(301);
+
+    client.get().uri("/products?category=computers&inStock=false&size=10")
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.totalElements").isEqualTo(1)
+      .jsonPath("$.products[0].productId").isEqualTo(302);
+
+    client.get().uri("/products?query=%5C%5C%7C&size=10")
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.totalElements").isEqualTo(0);
+    client.get().uri("/products?sort=priceDesc")
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+  }
+
+  @Test
+  void relatedCategoryDiscoveryExcludesSourceAndHandlesMissingCategory() {
+    Product source = new Product(311, "Outdoor jacket", 2, null);
+    source.setCategory("apparel");
+    Product relatedA = new Product(312, "Rain jacket", 1, null);
+    relatedA.setCategory("apparel");
+    Product relatedB = new Product(313, "Coat", 1, null);
+    relatedB.setCategory("apparel");
+    Product other = new Product(314, "Phone", 1, null);
+    other.setCategory("electronics");
+    for (Product p : java.util.List.of(source, relatedA, relatedB, other))
+      messageProcessor.accept(new Event<>(CREATE, p.getProductId(), p));
+
+    client.get().uri("/products/311/related?limit=1")
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.basis").isEqualTo("shared-category")
+      .jsonPath("$.products.length()").isEqualTo(1)
+      .jsonPath("$.products[0].productId").isEqualTo(312);
+    client.get().uri("/products/311/related?limit=30")
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.get().uri("/products/999/related")
+      .exchange().expectStatus().isEqualTo(NOT_FOUND);
+  }
+
   private void sendCreateProductEvent(int productId) {
     Product product = new Product(productId, "Name " + productId, productId, "SA");
     Event<Integer, Product> event = new Event(CREATE, productId, product);
