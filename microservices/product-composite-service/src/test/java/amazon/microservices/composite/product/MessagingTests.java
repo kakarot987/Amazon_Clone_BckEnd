@@ -45,7 +45,8 @@ import static reactor.core.publisher.Mono.just;
 				"spring.main.allow-bean-definition-overriding=true",
 				"eureka.client.enabled=false",
 				"spring.cloud.stream.defaultBinder=rabbit",
-				"spring.cloud.config.enabled=false"})
+				"spring.cloud.config.enabled=false",
+                "app.outbox.initial-delay-ms=600000"})
 @Import({TestChannelBinderConfiguration.class})
 class MessagingTests extends OutboxMongoTestBase {
 
@@ -200,5 +201,6 @@ class MessagingTests extends OutboxMongoTestBase {
 				.uri("/product-composite/" + productId)
 				.exchange()
 				.expectStatus().isEqualTo(expectedStatus);
+        dispatcher.dispatchOnce().block();
 	}
 }
