@@ -4,7 +4,8 @@ Spring Boot 3.1 / Java 17 microservices prototype: product, reviews,
 recommendations, composite product API, Spring Cloud Config, Eureka,
 Gateway and OAuth2 authorization.
 
-> This is a **microservices prototype**, not a production commerce platform.\n> All payments, carrier tracking and fulfillment operations are simulated.
+> This is a **microservices prototype**, not a production commerce platform.
+> All payments, carrier tracking and fulfillment operations are simulated.
 
 ## Verified build tooling
 
