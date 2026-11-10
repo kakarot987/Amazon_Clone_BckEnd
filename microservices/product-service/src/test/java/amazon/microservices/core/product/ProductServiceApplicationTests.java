@@ -1126,6 +1126,132 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
       .exchange().expectStatus().isEqualTo(NOT_FOUND);
   }
 
+
+  private void addCheckoutProduct(int id, int stock, String currency, String amount, int cartQty) {
+    Product p = new Product(id, "Bundle item " + id, 1, null);
+    p.setStockQuantity(stock);
+    p.setPrice(new java.math.BigDecimal(amount));
+    p.setCurrency(currency);
+    messageProcessor.accept(new Event<>(CREATE, id, p));
+    client.put().uri("/internal/carts/" + CART_OWNER + "/items/" + id)
+      .contentType(APPLICATION_JSON).bodyValue(new QuantityRequest(cartQty))
+      .exchange().expectStatus().isOk();
+  }
+
+  @Test
+  void multiItemCheckoutPreservesAllLinesAndReleasesOnCancellation() {
+    addCheckoutProduct(701, 6, "USD", "12.50", 2);
+    addCheckoutProduct(702, 4, "USD", "7.25", 3);
+    for (int i = 0; i < 2; i++) {
+      client.post().uri("/internal/orders/" + CART_OWNER)
+        .header("Idempotency-Key", "multi-checkout-701")
+        .exchange().expectStatus().isOk()
+        .expectBody().jsonPath("$.status").isEqualTo("RESERVED")
+        .jsonPath("$.total").isEqualTo(46.75)
+        .jsonPath("$.items.length()").isEqualTo(2)
+        .jsonPath("$.items[0].productId").isEqualTo(701)
+        .jsonPath("$.items[1].productId").isEqualTo(702)
+        .jsonPath("$.items[0].lineTotal").isEqualTo(25.0)
+        .jsonPath("$.items[1].lineTotal").isEqualTo(21.75);
+    }
+    assertEquals(4, repository.findByProductId(701).block().getStockQuantity());
+    assertEquals(1, repository.findByProductId(702).block().getStockQuantity());
+    String id = orderRepository.findAll().blockFirst().getId();
+    client.get().uri("/internal/order-history/" + CART_OWNER)
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.orders[0].order.items.length()").isEqualTo(2)
+      .jsonPath("$.orders[0].order.total").isEqualTo(46.75);
+
+    for (int i = 0; i < 2; i++) {
+      client.post().uri("/internal/orders/" + CART_OWNER + "/" + id + "/cancel")
+        .exchange().expectStatus().isOk()
+        .expectBody().jsonPath("$.status").isEqualTo("CANCELLED");
+    }
+    assertEquals(6, repository.findByProductId(701).block().getStockQuantity());
+    assertEquals(4, repository.findByProductId(702).block().getStockQuantity());
+    recoveryWorker.recoverOnce().block();
+    assertEquals(6, repository.findByProductId(701).block().getStockQuantity());
+    assertEquals(4, repository.findByProductId(702).block().getStockQuantity());
+  }
+
+  @Test
+  void partialReservationFailureCompensatesAlreadyReservedProducts() {
+    addCheckoutProduct(711, 5, "USD", "5.00", 2);
+    addCheckoutProduct(712, 5, "USD", "9.00", 2);
+    // The cart was valid but the second product was purchased by someone else.
+    var second = repository.findByProductId(712).block();
+    second.setStockQuantity(0);
+    repository.save(second).block();
+
+    client.post().uri("/internal/orders/" + CART_OWNER)
+      .header("Idempotency-Key", "multi-failure-711")
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    assertEquals(5, repository.findByProductId(711).block().getStockQuantity());
+    assertEquals(0, repository.findByProductId(712).block().getStockQuantity());
+    OrderEntity order = orderRepository.findAll().blockFirst();
+    assertEquals(OrderEntity.CANCELLED, order.getStatus());
+    recoveryWorker.recoverOnce().block();
+    assertEquals(5, repository.findByProductId(711).block().getStockQuantity());
+    assertEquals(0, repository.findByProductId(712).block().getStockQuantity());
+    assertEquals(2, order.getItems().size());
+  }
+
+  @Test
+  void multiItemMockPaymentConfirmationDoesNotRestoreStock() {
+    addCheckoutProduct(721, 4, "USD", "15.00", 2);
+    addCheckoutProduct(722, 3, "USD", "3.50", 1);
+    client.post().uri("/internal/orders/" + CART_OWNER)
+      .header("Idempotency-Key", "multi-payment-721")
+      .exchange().expectStatus().isOk();
+    String id = orderRepository.findAll().blockFirst().getId();
+    client.post().uri("/internal/orders/" + CART_OWNER + "/" + id + "/payment")
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.amount").isEqualTo(33.50);
+    String signed = paymentEvent("multi-payment-event-721", id, "SUCCEEDED");
+    for (int i = 0; i < 2; i++) {
+      sendSignedPaymentEvent(signed).expectStatus().isOk()
+        .expectBody().jsonPath("$.status").isEqualTo("MOCK_PAID")
+        .jsonPath("$.total").isEqualTo(33.50);
+    }
+    assertEquals(2, repository.findByProductId(721).block().getStockQuantity());
+    assertEquals(2, repository.findByProductId(722).block().getStockQuantity());
+    assertTrue(repository.findByProductId(721).block().getReservedOrderIds().isEmpty());
+    assertTrue(repository.findByProductId(722).block().getReservedOrderIds().isEmpty());
+    client.get().uri("/internal/review-eligibility/" + CART_OWNER + "/product/722")
+      .exchange().expectStatus().isOk().expectBody(Boolean.class).isEqualTo(true);
+    recoveryWorker.recoverOnce().block();
+    assertEquals(2, repository.findByProductId(721).block().getStockQuantity());
+    assertEquals(2, repository.findByProductId(722).block().getStockQuantity());
+  }
+
+  @Test
+  void multiItemCheckoutRejectsMismatchedCurrenciesBeforeStockReservation() {
+    addCheckoutProduct(731, 3, "USD", "10.00", 1);
+    addCheckoutProduct(732, 3, "EUR", "20.00", 1);
+    client.post().uri("/internal/orders/" + CART_OWNER)
+      .header("Idempotency-Key", "multi-currency-731")
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    assertEquals(3, repository.findByProductId(731).block().getStockQuantity());
+    assertEquals(3, repository.findByProductId(732).block().getStockQuantity());
+    assertEquals(0L, (long) orderRepository.count().block());
+  }
+
+  @Test
+  void multiItemExpirationReleasesAllReservations() {
+    addCheckoutProduct(741, 6, "USD", "1.00", 2);
+    addCheckoutProduct(742, 6, "USD", "2.00", 3);
+    client.post().uri("/internal/orders/" + CART_OWNER)
+      .header("Idempotency-Key", "multi-expiration-741")
+      .exchange().expectStatus().isOk();
+    OrderEntity order = orderRepository.findAll().blockFirst();
+    order.setExpiresAt(Instant.now().minusSeconds(1));
+    orderRepository.save(order).block();
+    recoveryWorker.recoverOnce().block();
+    assertEquals(OrderEntity.EXPIRED, orderRepository.findById(order.getId()).block().getStatus());
+    assertEquals(6, repository.findByProductId(741).block().getStockQuantity());
+    assertEquals(6, repository.findByProductId(742).block().getStockQuantity());
+  }
+
   private void sendCreateProductEvent(int productId) {
     Product product = new Product(productId, "Name " + productId, productId, "SA");
     Event<Integer, Product> event = new Event(CREATE, productId, product);
