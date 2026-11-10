@@ -1424,7 +1424,7 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
     assertEquals(1L, (long) processedProductEvents.count().block());
 
     Product altered = new Product(951, "Tampered payload", 2, null);
-    assertThrows(IllegalArgumentException.class,
+    assertThrows(amazon.util.exceptions.EventProcessingException.class,
         () -> messageProcessor.accept(new Event<>(CREATE, 951, altered, "product-replay-951")));
     assertEquals("Inbox product", repository.findByProductId(951).block().getName());
   }
