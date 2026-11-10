@@ -96,8 +96,7 @@ public class ReturnController {
                                 if (deliveredAt == null || deliveredAt.plus(returnWindow).isBefore(Instant.now()))
                                     return Mono.error(new InvalidInputException(
                                             "Return request window has closed"));
-                                BigDecimal amount = order.getUnitPrice().multiply(
-                                        BigDecimal.valueOf(order.getQuantity()));
+                                BigDecimal amount = order.getTotal();
                                 return returns.save(new ReturnEntity(
                                                 orderId, ownerKey, reasonCode, amount,
                                                 order.getCurrency()))
