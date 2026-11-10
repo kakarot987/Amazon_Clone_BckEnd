@@ -78,7 +78,7 @@ public class ProductCatalogController implements ProductCatalogOperations {
                     ? Criteria.where("stockQuantity").gt(0)
                     : new Criteria().orOperator(
                         Criteria.where("stockQuantity").lte(0),
-                        Criteria.where("stockQuantity").exists(false)));
+                        Criteria.where("stockQuantity").is(null)));
 
         Query countQuery = conditions.isEmpty() ? new Query()
                 : Query.query(new Criteria().andOperator(conditions.toArray(new Criteria[0])));
