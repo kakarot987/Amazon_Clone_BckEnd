@@ -49,14 +49,16 @@ public class CustomerReviewController {
                     .orElseGet(() -> new CustomerReviewEntity(
                             productId, ownerKey, request.rating(), request.title(), request.content()));
             // Repeated identical PUTs are idempotent, including updatedAt.
+            String normalizedTitle = request.title().trim();
+            String normalizedContent = request.content().trim();
             if (entity.getId() != null
                     && entity.getRating() == request.rating()
-                    && entity.getTitle().equals(request.title())
-                    && entity.getContent().equals(request.content()))
+                    && entity.getTitle().equals(normalizedTitle)
+                    && entity.getContent().equals(normalizedContent))
                 return publicReview(entity);
             entity.setRating(request.rating());
-            entity.setTitle(request.title().trim());
-            entity.setContent(request.content().trim());
+            entity.setTitle(normalizedTitle);
+            entity.setContent(normalizedContent);
             entity.setUpdatedAt(java.time.Instant.now());
             try {
                 return publicReview(repository.saveAndFlush(entity));
