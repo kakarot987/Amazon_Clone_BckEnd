@@ -89,3 +89,7 @@ For true saga state management, introduce an authenticated or signed, idempotent
 ## Signed consumer inbox evidence
 
 An operator can request `GET /product-composite/fulfillment/operations/{operationId}/receipts` with `fulfillment:read` to inspect transactionally committed consumer inbox records through signed internal-only HTTP probes. An outcome of `ALL_RECEIPTS_VERIFIED` is evidence that every tracked event was once applied at its destination, **not** a globally consistent current aggregate or completed saga. The feature requires a unique `APP_RECEIPT_PROBE_SECRET` shared by the four data services; without it the audit returns 503 and consumer probe endpoints fail closed. See [consumer receipts](RECEIPTS.md).
+
+## Opt-in durable supervision
+
+Every new operation now includes a `PENDING` record in `aggregate_supervisions`, written atomically with the operation and outgoing events. The disabled-by-default background supervisor uses MongoDB atomic lease claims, generation fencing, bounded checks and read-only signed receipt observations. Operators inspect `GET /product-composite/fulfillment/operations/{operationId}/supervision` with `fulfillment:read`; no automatic replay/compensation is performed. See [supervision runbook](SAGA_SUPERVISION.md).

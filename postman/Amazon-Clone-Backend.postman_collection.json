@@ -443,6 +443,36 @@
           }
         }
       ]
+    },
+    {
+      "name": "16 | Operator inspect fenced saga supervision (read-only)",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{operatorToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/product-composite/fulfillment/operations/{{operationId}}/supervision",
+        "description": "Requires fulfillment:read. Every new operation has a PENDING supervision record. Background worker is disabled unless APP_SAGA_ENABLED=true. No compensation or replay."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Supervision record responds\", () => pm.response.to.have.status(200));",
+              "if (pm.response.code === 200) { const data = pm.response.json(); pm.test(\"Conservative supervision state\", () => pm.expect([\"PENDING\",\"CHECKING\",\"WAITING\",\"RECEIPTS_VERIFIED\",\"NEEDS_REVIEW\"]).to.include(data.state)); }"
+            ]
+          }
+        }
+      ]
     }
   ]
 }

@@ -12,6 +12,7 @@ A distributed commerce **portfolio prototype** with product discovery, carts, mu
 | [Aggregate reconciliation](docs/RECONCILIATION.md) | Read-only operator snapshot checks, statuses and recovery gaps |
 | [Durable operation tracking](docs/OPERATIONS.md) | Atomic outbox-operation journal, publisher progress and saga boundaries |
 | [Consumer receipt evidence](docs/RECEIPTS.md) | Authenticated read-only consumer transaction verification |
+| [Fenced saga supervision](docs/SAGA_SUPERVISION.md) | Opt-in bounded recovery status monitor; no compensation |
 | [Live demo walkthrough](docs/DEMO.md) | Reproducible local demo and broker-recovery recording plan |
 | [Postman collection](postman/Amazon-Clone-Backend.postman_collection.json) | Authenticated request flow and assertions |
 | [Sample product](samples/product-demo.json) | Non-sensitive product/review/recommendation test data |
@@ -23,7 +24,7 @@ A distributed commerce **portfolio prototype** with product discovery, carts, mu
 - **API boundary:** Spring Cloud Gateway routes authenticated HTTP calls to the composite API; OAuth2/JWT scopes protect customer and operator operations.
 - **Catalog and commerce:** product listing, recommendations, reviews, carts, wishlists, multi-line checkout, expiring reservations, mock payment state transitions, simulated shipping/returns, and order history.
 - **Inventory consistency:** the product service uses MongoDB multi-document transactions for multi-line stock reservation and terminal order transitions; there is a **read-only**, bounded inventory audit. This is not a full, globally fenced inventory ledger.
-- **Asynchronous reliability:** composite **transactional outbox** (PR #20), retryable leased dispatcher and consumer-side processed-event inboxes (PR #19), plus a [read-only aggregate reconciliation audit](docs/RECONCILIATION.md) and [durable operation journal](docs/OPERATIONS.md) and [signed consumer inbox evidence](docs/RECEIPTS.md) for verifying tracked consumer commits. Delivery is **at least once**; this audit is **not** a complete saga or convergence guarantee.
+- **Asynchronous reliability:** composite **transactional outbox** (PR #20), retryable leased dispatcher and consumer-side processed-event inboxes (PR #19), plus a [read-only aggregate reconciliation audit](docs/RECONCILIATION.md) and [durable operation journal](docs/OPERATIONS.md) and [signed consumer inbox evidence](docs/RECEIPTS.md) for verifying tracked consumer commits. An [opt-in fenced supervisor](docs/SAGA_SUPERVISION.md) records bounded diagnostic outcomes, not business compensation. Delivery is **at least once**; this audit is **not** a complete saga or convergence guarantee.
 - **Operations:** Docker Compose, Testcontainers-backed Java CI, Prometheus/Grafana configuration, Zipkin and a local smoke test.
 
 ## Run locally
