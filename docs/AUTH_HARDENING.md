@@ -42,3 +42,7 @@ This improvement reduces restart-related JWT breakage and prevents a class of we
 ## CI diagnostics
 
 The Java CI workflow first checks that the Docker daemon is reachable, then runs Gradle and Testcontainers. A `DockerClientProviderStrategy`/`ExceptionInInitializerError` indicates Docker discovery or daemon access failed; it is **not** evidence that all Java assertions failed. If the Docker preflight passes but Testcontainers fails later, inspect the first Testcontainers exception and uploaded test reports. The Java 17 build must pass both compilation and the integration suite before a merge is considered verified.
+
+## Docker Engine 29 and Testcontainers API compatibility
+
+The GitHub-hosted runner used for CI run #66 ran **Docker Engine 29.4.2** (daemon minimum API 1.40). Docker CLI connectivity alone does not prove Testcontainers can negotiate an API version. To avoid the legacy docker-java API 1.32 fallback, this repository pins **API 1.44 for test runtime only** using `src/test/resources/docker-java.properties` in each Testcontainers-enabled microservice. No production Docker API setting is changed. The setting assumes Docker Engine 25+ for integration tests; use a compatible Docker daemon locally. The CI job also prints the resolved Testcontainers dependency version and, on failure, a bounded selection of JUnit XML root causes. Never skip the MongoDB/Testcontainers tests to obtain a green build.
