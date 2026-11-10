@@ -90,6 +90,18 @@ class OAuth2AuthorizationServerApplicationTests {
 	}
 
 	@Test
+	void moderatorClientHasIsolatedScope() throws Exception {
+		String credentials = Base64.getEncoder().encodeToString(
+			"mock-review-moderator:test-review-moderator-secret".getBytes());
+		this.mvc.perform(post("/oauth2/token")
+				.param("grant_type", "client_credentials")
+				.param("scope", "review:moderate")
+				.header("Authorization", "Basic " + credentials))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.access_token").exists());
+	}
+
+	@Test
 	void requestOpenidConfiguration() throws Exception {
 
 		this.mvc.perform(get("/.well-known/openid-configuration"))
