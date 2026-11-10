@@ -7,6 +7,7 @@ import amazon.microservices.core.product.persistence.CartRepository;
 import amazon.microservices.core.product.persistence.OrderRepository;
 import amazon.microservices.core.product.persistence.ShipmentRepository;
 import amazon.microservices.core.product.persistence.ReturnRepository;
+import amazon.microservices.core.product.persistence.WishlistRepository;
 import amazon.microservices.core.product.persistence.ShipmentEntity;
 import amazon.api.commerce.ShipmentEvent;
 import amazon.api.commerce.ReturnRequest;
@@ -68,6 +69,9 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
   private ReturnRepository returnRepository;
 
   @Autowired
+  private WishlistRepository wishlistRepository;
+
+  @Autowired
   private OrderRecoveryWorker recoveryWorker;
 
   @Autowired
@@ -81,6 +85,7 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
     orderRepository.deleteAll().block();
     shipmentRepository.deleteAll().block();
     returnRepository.deleteAll().block();
+    wishlistRepository.deleteAll().block();
   }
 
   @Test
@@ -852,6 +857,95 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
     client.post().uri("/internal/returns/owner/" + CART_OWNER + "/order/" + orderId)
       .contentType(APPLICATION_JSON).bodyValue(new ReturnRequest("arbitrary free-text PII"))
       .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+  }
+
+
+  @Test
+  void wishlistIsOwnerScopedAndSavingSameItemIsIdempotent() {
+    Product product = new Product(210, "Noise cancelling headset", 2, null);
+    product.setCategory("audio");
+    product.setStockQuantity(0);
+    product.setPrice(new java.math.BigDecimal("49.00"));
+    product.setCurrency("USD");
+    messageProcessor.accept(new Event<>(CREATE, 210, product));
+    String path = "/internal/wishlists/" + CART_OWNER;
+
+    for (int i = 0; i < 2; i++) {
+      client.put().uri(path + "/items/210")
+        .exchange().expectStatus().isOk().expectBody()
+        .jsonPath("$.totalElements").isEqualTo(1)
+        .jsonPath("$.items[0].productId").isEqualTo(210)
+        .jsonPath("$.items[0].inStock").isEqualTo(false)
+        .jsonPath("$.items[0].price").isEqualTo(49.0);
+    }
+    assertEquals(1L, (long) wishlistRepository.count().block());
+    client.get().uri("/internal/wishlists/" + OTHER_OWNER)
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.totalElements").isEqualTo(0)
+      .jsonPath("$.items.length()").isEqualTo(0);
+
+    client.delete().uri(path + "/items/210")
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.totalElements").isEqualTo(0);
+    client.delete().uri(path + "/items/210")
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.totalElements").isEqualTo(0);
+  }
+
+  @Test
+  void wishlistShowsLivePriceStockAndDeletedProductState() {
+    Product product = new Product(211, "Travel backpack", 1, null);
+    product.setStockQuantity(1);
+    product.setPrice(new java.math.BigDecimal("15.00"));
+    product.setCurrency("USD");
+    messageProcessor.accept(new Event<>(CREATE, 211, product));
+    String path = "/internal/wishlists/" + CART_OWNER;
+    client.put().uri(path + "/items/211").exchange().expectStatus().isOk();
+
+    var entity = repository.findByProductId(211).block();
+    entity.setStockQuantity(0);
+    entity.setPrice(new java.math.BigDecimal("25.00"));
+    repository.save(entity).block();
+
+    client.get().uri(path).exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.items[0].inStock").isEqualTo(false)
+      .jsonPath("$.items[0].price").isEqualTo(25.0);
+
+    repository.delete(repository.findByProductId(211).block()).block();
+    client.get().uri(path).exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.totalElements").isEqualTo(1)
+      .jsonPath("$.items[0].productExists").isEqualTo(false)
+      .jsonPath("$.items[0].inStock").isEqualTo(false)
+      .jsonPath("$.items[0].productId").isEqualTo(211);
+    client.put().uri(path + "/items/211")
+      .exchange().expectStatus().isEqualTo(NOT_FOUND);
+  }
+
+  @Test
+  void wishlistPagesAndClearAreBounded() {
+    String path = "/internal/wishlists/" + CART_OWNER;
+    for (int id = 220; id < 223; id++) {
+      messageProcessor.accept(new Event<>(CREATE, id, new Product(id, "Saved " + id, 1, null)));
+      client.put().uri(path + "/items/" + id).exchange().expectStatus().isOk();
+    }
+    client.get().uri(path + "?page=0&size=2").exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.totalElements").isEqualTo(3)
+      .jsonPath("$.totalPages").isEqualTo(2)
+      .jsonPath("$.items.length()").isEqualTo(2);
+    client.get().uri(path + "?page=1&size=2").exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.items.length()").isEqualTo(1);
+    client.get().uri(path + "?page=5&size=2").exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.items.length()").isEqualTo(0);
+    client.get().uri(path + "?page=-1").exchange()
+      .expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.get().uri(path + "?size=101").exchange()
+      .expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+
+    client.delete().uri(path).exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.totalElements").isEqualTo(0);
+    client.delete().uri(path).exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.totalElements").isEqualTo(0);
+    assertEquals(0L, (long) cartRepository.count().block());
   }
 
   private void sendCreateProductEvent(int productId) {
