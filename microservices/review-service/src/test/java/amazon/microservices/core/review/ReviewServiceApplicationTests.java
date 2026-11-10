@@ -4,7 +4,11 @@ import amazon.api.core.review.Review;
 import amazon.api.event.Event;
 import amazon.microservices.core.review.persistence.ReviewRepository;
 import amazon.microservices.core.review.persistence.CustomerReviewRepository;
-import amazon.api.discovery.CustomerReviewRequest;
+import amazon.api.discovery.VerifiedCustomerReviewSubmission;
+import amazon.api.discovery.ReviewReportRequest;
+import amazon.api.discovery.ReviewModerationRequest;
+import amazon.microservices.core.review.persistence.CustomerReviewReportRepository;
+import amazon.microservices.core.review.persistence.ReviewModerationEventRepository;
 import amazon.util.exceptions.InvalidInputException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,12 +47,20 @@ class ReviewServiceApplicationTests extends MySqlTestBase {
   private CustomerReviewRepository customerReviews;
 
   @Autowired
+  private CustomerReviewReportRepository reviewReports;
+
+  @Autowired
+  private ReviewModerationEventRepository moderationEvents;
+
+  @Autowired
   @Qualifier("messageProcessor")
   private Consumer<Event<Integer, Review>> messageProcessor;
 
   @BeforeEach
   void setupDb() {
     repository.deleteAll();
+    moderationEvents.deleteAll();
+    reviewReports.deleteAll();
     customerReviews.deleteAll();
   }
 
@@ -165,16 +177,16 @@ class ReviewServiceApplicationTests extends MySqlTestBase {
     String ownerA = "/internal/customer-reviews/31/owner/" + REVIEW_OWNER_A;
     String ownerB = "/internal/customer-reviews/31/owner/" + REVIEW_OWNER_B;
     client.put().uri(ownerA).contentType(APPLICATION_JSON)
-      .bodyValue(new CustomerReviewRequest(5, "Excellent", "Loved this item"))
+      .bodyValue(new VerifiedCustomerReviewSubmission(5, "Excellent", "Loved this item", true))
       .exchange().expectStatus().isOk().expectBody()
       .jsonPath("$.rating").isEqualTo(5)
       .jsonPath("$.title").isEqualTo("Excellent");
     client.put().uri(ownerA).contentType(APPLICATION_JSON)
-      .bodyValue(new CustomerReviewRequest(3, "Good", "Still useful"))
+      .bodyValue(new VerifiedCustomerReviewSubmission(3, "Good", "Still useful", true))
       .exchange().expectStatus().isOk().expectBody()
       .jsonPath("$.rating").isEqualTo(3);
     client.put().uri(ownerB).contentType(APPLICATION_JSON)
-      .bodyValue(new CustomerReviewRequest(1, "Poor", "Not for me"))
+      .bodyValue(new VerifiedCustomerReviewSubmission(1, "Poor", "Not for me", false))
       .exchange().expectStatus().isOk();
     assertEquals(2L, customerReviews.count());
 
@@ -205,11 +217,11 @@ class ReviewServiceApplicationTests extends MySqlTestBase {
     String url = "/internal/customer-reviews/32/owner/" + REVIEW_OWNER_A;
     for (int invalidRating : new int[] {0, 6}) {
       client.put().uri(url).contentType(APPLICATION_JSON)
-        .bodyValue(new CustomerReviewRequest(invalidRating, "Title", "Body"))
+        .bodyValue(new VerifiedCustomerReviewSubmission(invalidRating, "Title", "Body", false))
         .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
     }
     client.put().uri(url).contentType(APPLICATION_JSON)
-      .bodyValue(new CustomerReviewRequest(4, " ", "Body"))
+      .bodyValue(new VerifiedCustomerReviewSubmission(4, " ", "Body", false))
       .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
     client.get().uri("/internal/customer-reviews/32?page=-1")
       .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
@@ -221,6 +233,91 @@ class ReviewServiceApplicationTests extends MySqlTestBase {
       .exchange().expectStatus().isOk().expectBody()
       .jsonPath("$.reviewCount").isEqualTo(0);
     assertEquals(0L, customerReviews.count());
+  }
+
+
+  @Test
+  void mockPurchaseBadgeAndHiddenRatingsAreHandledSeparately() {
+    String ownerA = "/internal/customer-reviews/41/owner/" + REVIEW_OWNER_A;
+    String ownerB = "/internal/customer-reviews/41/owner/" + REVIEW_OWNER_B;
+    client.put().uri(ownerA).contentType(APPLICATION_JSON)
+      .bodyValue(new VerifiedCustomerReviewSubmission(5, "Great", "Excellent mock product", true))
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.mockPurchaseConfirmed").isEqualTo(true);
+    client.put().uri(ownerB).contentType(APPLICATION_JSON)
+      .bodyValue(new VerifiedCustomerReviewSubmission(1, "Bad", "Not useful", false))
+      .exchange().expectStatus().isOk();
+    Long id = customerReviews.findByProductIdAndOwnerKey(41, REVIEW_OWNER_B).orElseThrow().getId();
+
+    client.post().uri("/internal/review-moderation/products/41/reviews/" + id + "/reports/owner/" + REVIEW_OWNER_A)
+      .contentType(APPLICATION_JSON).bodyValue(new ReviewReportRequest("SPAM"))
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.reasonCode").isEqualTo("SPAM");
+    client.post().uri("/internal/review-moderation/products/41/reviews/" + id + "/reports/owner/" + REVIEW_OWNER_A)
+      .contentType(APPLICATION_JSON).bodyValue(new ReviewReportRequest("SPAM"))
+      .exchange().expectStatus().isOk();
+    assertEquals(1L, reviewReports.count());
+
+    client.post().uri("/internal/review-moderation/products/41/reviews/" + id + "/decision")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new ReviewModerationRequest("mod-event-hide-41", "HIDE", "SPAM"))
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.visibility").isEqualTo("HIDDEN")
+      .jsonPath("$.reportCount").isEqualTo(1);
+    client.post().uri("/internal/review-moderation/products/41/reviews/" + id + "/decision")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new ReviewModerationRequest("mod-event-hide-41", "HIDE", "SPAM"))
+      .exchange().expectStatus().isOk();
+    assertEquals(1L, moderationEvents.count());
+
+    client.get().uri("/internal/customer-reviews/41")
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.totalElements").isEqualTo(1)
+      .jsonPath("$.reviews[0].rating").isEqualTo(5);
+    client.get().uri("/internal/customer-reviews/41/ratings")
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.reviewCount").isEqualTo(1)
+      .jsonPath("$.averageRating").isEqualTo(5.0);
+
+    client.post().uri("/internal/review-moderation/products/41/reviews/" + id + "/decision")
+      .contentType(APPLICATION_JSON)
+      .bodyValue(new ReviewModerationRequest("mod-event-restore-41", "RESTORE", "SPAM"))
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.visibility").isEqualTo("VISIBLE");
+    client.get().uri("/internal/customer-reviews/41/ratings")
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.reviewCount").isEqualTo(2);
+  }
+
+  @Test
+  void reviewReportsRejectSelfReportsAndConflictingModeratorReplays() {
+    String owner = "/internal/customer-reviews/42/owner/" + REVIEW_OWNER_A;
+    client.put().uri(owner).contentType(APPLICATION_JSON)
+      .bodyValue(new VerifiedCustomerReviewSubmission(4, "Nice", "Worth testing", false))
+      .exchange().expectStatus().isOk();
+    Long reviewId = customerReviews.findByProductIdAndOwnerKey(42, REVIEW_OWNER_A).orElseThrow().getId();
+
+    String report = "/internal/review-moderation/products/42/reviews/" + reviewId + "/reports/owner/";
+    client.post().uri(report + REVIEW_OWNER_A)
+      .contentType(APPLICATION_JSON).bodyValue(new ReviewReportRequest("ABUSE"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.post().uri(report + REVIEW_OWNER_B)
+      .contentType(APPLICATION_JSON).bodyValue(new ReviewReportRequest("OFF_TOPIC"))
+      .exchange().expectStatus().isOk();
+    client.post().uri(report + REVIEW_OWNER_B)
+      .contentType(APPLICATION_JSON).bodyValue(new ReviewReportRequest("SPAM"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+
+    String decision = "/internal/review-moderation/products/42/reviews/" + reviewId + "/decision";
+    client.post().uri(decision).contentType(APPLICATION_JSON)
+      .bodyValue(new ReviewModerationRequest("mod-event-unique-42", "HIDE", "ABUSE"))
+      .exchange().expectStatus().isOk();
+    client.post().uri(decision).contentType(APPLICATION_JSON)
+      .bodyValue(new ReviewModerationRequest("mod-event-unique-42", "RESTORE", "ABUSE"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.get().uri("/internal/review-moderation/reports?page=0&size=10")
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.totalElements").isEqualTo(1);
   }
 
   private void sendCreateReviewEvent(int productId, int reviewId) {
