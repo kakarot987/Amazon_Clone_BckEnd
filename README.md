@@ -748,3 +748,55 @@ can become expensive at scale. For large datasets, add an index on
 keyset pagination, monitoring, and retention policies. Keep the
 internal `/internal/order-history/**` routes private and review the
 full Java 17 CI + Testcontainers suite before merging.
+
+## Multi-item checkout and crash recovery (draft)
+
+The checkout service now accepts **1–20 distinct products in one cart**
+(quantities 1–99 per product). Items are sorted by product ID before
+creating a durable order manifest. Each order stores authoritative
+product name, unit price, quantity and per-line total at checkout time,
+and a computed grand total in one currency. Currencies must match
+across every product. Cart display prices never determine payment amounts.
+
+```http
+POST /product-composite/orders
+Authorization: Bearer <signed-in-customer-order-write-token>
+Idempotency-Key: unique-multi-checkout-1234
+
+GET /product-composite/orders/{orderId}
+GET /product-composite/orders/history
+```
+
+The existing mock-payment intent now uses the **sum of every stored line
+total**; order history exposes the complete item list. Cancellation,
+expiration, mock-payment failure and successful mock-payment confirmation
+iterate over **every** product's reservation token. Mock returns calculate
+their simulated refund from the entire order total. Purchase-review
+eligibility checks every product in a mock-paid order, not just the first.
+
+### Failure recovery, safety and limits
+
+The order's entire item snapshot is persisted **before** stock is
+decremented. Each product's `reservedOrderIds` token ensures that
+repeated reservation and release attempts for the same order do not
+double-decrement or double-increment its quantity. On a line-item
+stock failure, the order is marked `CANCELLATION_PENDING` and any
+already-held stock is returned. The existing worker retries unfinished
+`PENDING`, cancellation, expiration, and simulated payment transitions.
+
+**This is NOT an atomic multi-product order transaction.** The product
+updates and order document live in separate Mongo records; simultaneous
+checkout/cancellation workers, a crash during rollback, or a missing
+product may leave inconsistent stock and require operator reconciliation.
+The worker is best-effort. Before real payment or production multi-item
+orders, implement durable reservation leases/ownership, transactional
+outbox or a MongoDB transaction on a replica set, inventory auditing,
+timeouts, distributed worker coordination and forced-crash/concurrency
+tests.
+
+Other limits: Orders are single-currency and capped at 20 distinct
+products; one mock shipment and one mock return still represent the
+**entire order**, not individual packages or item-level returns.
+Existing legacy single-product orders remain readable through the
+original scalar fields and a one-line compatibility projection. No
+real payment, shipping or refund takes place.
