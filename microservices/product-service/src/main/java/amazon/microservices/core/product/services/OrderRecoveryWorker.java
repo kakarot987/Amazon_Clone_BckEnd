@@ -3,6 +3,9 @@ package amazon.microservices.core.product.services;
 import amazon.microservices.core.product.persistence.OrderEntity;
 import amazon.microservices.core.product.persistence.OrderRepository;
 import org.slf4j.Logger;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Gauge;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -27,9 +30,13 @@ public class OrderRecoveryWorker {
     private final OrderController controller;
     private final Duration interval;
     private final int batchSize;
+    private final CommerceObservability observability;
+    private final AtomicInteger lastBatchSize = new AtomicInteger();
     private Disposable task;
 
     public OrderRecoveryWorker(OrderRepository orders, OrderController controller,
+                               CommerceObservability observability,
+                               MeterRegistry registry,
                                @Value("${app.orders.recovery-interval:PT30S}") Duration interval,
                                @Value("${app.orders.recovery-batch-size:100}") int batchSize) {
         if (interval.isZero() || interval.isNegative())
@@ -38,6 +45,10 @@ public class OrderRecoveryWorker {
             throw new IllegalArgumentException("Recovery batch size must be 1-1000");
         this.orders = orders;
         this.controller = controller;
+        this.observability = observability;
+        Gauge.builder("commerce.recovery.last.batch.size", lastBatchSize, AtomicInteger::get)
+                .description("Count of orders seen as needing recovery in the last worker pass")
+                .register(registry);
         this.interval = interval;
         this.batchSize = batchSize;
     }
@@ -64,12 +75,18 @@ public class OrderRecoveryWorker {
         return orders.findAll()
                 .filter(order -> needsReconciliation(order, now))
                 .take(batchSize)
-                .concatMap(order -> controller.reconcileOrder(order.getId(), now)
-                        .onErrorResume(error -> {
-                            LOG.warn("Could not reconcile order {}: {}", order.getId(), error.toString());
-                            return reactor.core.publisher.Mono.empty();
-                        }))
-                .then();
+                .collectList()
+                .flatMap(pending -> {
+                    lastBatchSize.set(pending.size());
+                    return Flux.fromIterable(pending)
+                            .concatMap(order -> controller.reconcileOrder(order.getId(), now)
+                                    .onErrorResume(error -> {
+                                        observability.recoveryFailure();
+                                        LOG.warn("Could not reconcile order {}: {}", order.getId(), error.toString());
+                                        return reactor.core.publisher.Mono.empty();
+                                    }))
+                            .then();
+                });
     }
 
     static boolean needsReconciliation(OrderEntity order, Instant now) {
