@@ -47,7 +47,7 @@ class SagaSupervisorTests extends OutboxMongoTestBase {
         mongo.remove(new Query(), SagaSupervision.class).block();
         mongo.remove(new Query(), OutboxEntry.class).block();
         mongo.remove(new Query(), AggregateOperation.class).block();
-        reset(audit);
+        org.mockito.Mockito.reset(audit);
     }
 
     private String seed() {
