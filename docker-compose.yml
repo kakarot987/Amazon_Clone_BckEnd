@@ -1,13 +1,16 @@
 services:
   mongodb:
     image: mongo:6.0
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
     networks: [backend]
     volumes: [mongo-data:/data/db]
+    # Initialize the one-node replica set once, then wait for PRIMARY election.
+    # The internal hostname must match what the Java drivers can resolve.
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'try { rs.status().myState === 1 } catch (e) { rs.initiate({_id: \"rs0\", members: [{_id: 0, host: \"mongodb:27017\"}]}); false }' | grep -q true"]
       interval: 10s
-      timeout: 5s
-      retries: 15
+      timeout: 6s
+      retries: 20
 
   mysql:
     image: mysql:8.0
@@ -84,6 +87,7 @@ services:
       <<: *service-env
       SERVER_PORT: 8080
       SPRING_DATA_MONGODB_HOST: mongodb
+      SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/product-db?replicaSet=rs0
       MOCK_PAYMENT_WEBHOOK_SECRET: ${MOCK_PAYMENT_WEBHOOK_SECRET:?Set MOCK_PAYMENT_WEBHOOK_SECRET in .env}
     depends_on: [config-server, mongodb, rabbitmq, eureka]
 

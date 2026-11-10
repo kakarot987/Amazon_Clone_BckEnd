@@ -842,3 +842,66 @@ outbox and crash/fault-injection testing.
 Run the full Java 17/Testcontainers suite and review concurrent
 checkout, cancellation, mock payment and worker-recovery behavior
 before merging.
+
+## Transactional inventory and read-only reconciliation (draft)
+
+Checkout now executes the entire multi-line inventory reservation and the
+order's final `RESERVED` update in one **reactive MongoDB transaction**.
+Cancel/expiry/decline compensation and successful mock-payment finalization
+likewise commit all involved product updates together with the final order
+state. Transactions use snapshot reads and majority writes and **do not**
+silently fall back to non-transactional stock updates.
+
+### Required database deployment
+
+MongoDB multi-document transactions need a replica set (or sharded
+deployment). The default `docker-compose.yml` now starts MongoDB
+6 in single-node replica-set mode, initializes `rs0` and waits for a
+primary in its healthcheck. The product service uses
+`mongodb://mongodb:27017/product-db?replicaSet=rs0`. Its Testcontainers
+test fixture also uses an actual replica-set connection.
+
+**Existing Docker data:** If your local `mongo-data` volume was
+created by standalone MongoDB, plan a controlled migration/backup.
+Confirm `rs.status()` and replica-set health rather than deleting the
+volume or blindly reinitializing. A one-member replica set is intended
+for **local development only**; production requires multiple voting
+members, a tested backup/restore procedure, and a proper deployment plan.
+The alternative Kafka/partitioned Compose files must also be upgraded
+to replica-set-capable MongoDB before exercising transactional checkout.
+
+### Safety properties and limitations
+
+- A failed reservation of any product aborts all the in-transaction
+  deductions and does not leave partially committed stock. The previously
+  claimed order is separately moved to a recoverable cancellation state.
+- A successful mock payment clears all product hold tokens without
+  restocking; cancellation, expiry and mock decline restore held stock
+  at most once, atomically with terminal order state.
+- Existing `reservedOrderIds`, lease claims and recovery handling remain
+  to support retrying older interrupted orders and idempotent events.
+- MongoDB write conflicts may cause a request to fail rather than silently
+  oversell. The caller can safely retry with the same idempotency key.
+  Test failure injection and commit-ambiguity behavior before considering
+  real-money operations.
+
+### Read-only operator audit
+
+An authorized fulfillment-operator token with `fulfillment:read` may call:
+
+```http
+GET /product-composite/fulfillment/inventory/reconciliation
+Authorization: Bearer <fulfillment-operator-token>
+```
+
+The report checks up to **100 products** and **100 active orders** per
+request for orphaned hold tokens, terminal-order holds, missing product
+holds and invalid stock. It returns a `truncated` flag when the bounded
+scan is incomplete. **It never modifies stock**. This audit is a
+best-effort snapshot, not a globally consistent real-time reconciliation
+or a full inventory ledger. Investigate flagged records manually before
+any correction. For production scale, replace offset/bounded scans
+with durable inventory movements, audited repair approvals, and alerting.
+
+All payment, shipping and refund operations in this repository still use
+**mock states** and do not transfer real money or goods.

@@ -23,6 +23,7 @@ import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Flux;
+import org.springframework.transaction.reactive.TransactionalOperator;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -37,10 +38,10 @@ import java.util.HashSet;
 import java.util.Set;
 
 /**
- * Multi-item checkout prototype. Each product reservation is an atomic Mongo
- * document update, but the overall order is NOT a multi-document transaction.
- * PENDING orders are retried; partial failed reservations are compensated.
- * Payment and fulfillment remain simulated.
+ * Multi-item checkout. Stock/token changes and the final order status
+ * now commit together inside a MongoDB replica-set transaction.
+ * Existing intermediate states and idempotent compensation support legacy
+ * partial reservations and recovery. Payment and fulfillment are simulated.
  */
 @RestController
 @RequestMapping("/internal/orders")
@@ -50,14 +51,17 @@ public class OrderController {
     private final ProductRepository products;
     private final ReactiveMongoTemplate mongo;
     private final Duration reservationTtl;
+    private final TransactionalOperator inventoryTransactions;
 
     public OrderController(OrderRepository orders, CartRepository carts,
                            ProductRepository products, ReactiveMongoTemplate mongo,
+                           TransactionalOperator inventoryTransactions,
                            @Value("${app.orders.reservation-ttl:PT15M}") Duration reservationTtl) {
         this.orders = orders;
         this.carts = carts;
         this.products = products;
         this.mongo = mongo;
+        this.inventoryTransactions = inventoryTransactions;
         if (reservationTtl.isZero() || reservationTtl.isNegative())
             throw new IllegalArgumentException("Reservation TTL must be positive");
         this.reservationTtl = reservationTtl;
@@ -210,8 +214,12 @@ public class OrderController {
                             || !owned.getExpiresAt().isAfter(Instant.now()))
                         return failClaimedReservation(owned, claim,
                                 new InvalidInputException("Order reservation has expired"));
+                    // All product token writes and final RESERVED state commit together.
+                    // On failure, MongoDB rolls every product update back before
+                    // durable failure/compensation is attempted separately.
                     return reserve(owned, claim)
                             .then(Mono.defer(() -> completeReservation(owned.getId(), claim)))
+                            .as(inventoryTransactions::transactional)
                             .onErrorResume(error -> failClaimedReservation(owned, claim, error));
                 })
                 // Another request already owns the claim. Return its current
@@ -412,11 +420,9 @@ public class OrderController {
                                 "Order changed during payment confirmation"));
                     current.setStatus(OrderEntity.MOCK_PAID);
                     current.setMockPaidAt(Instant.now());
-                    return orders.save(current)
-                            .onErrorResume(OptimisticLockingFailureException.class,
-                                    ex -> orders.findById(order.getId()))
-                            .map(this::receipt);
-                });
+                    return orders.save(current).map(this::receipt);
+                })
+                .as(inventoryTransactions::transactional);
     }
 
     private Mono<Void> finalizeLine(String orderId, OrderLine line) {
@@ -471,11 +477,9 @@ public class OrderController {
                               ? OrderEntity.PAYMENT_FAILED : OrderEntity.CANCELLED);
                     if (OrderEntity.PAYMENT_FAILED.equals(current.getStatus()))
                         current.setPaymentStatus("DECLINED");
-                    return orders.save(current)
-                            .onErrorResume(OptimisticLockingFailureException.class,
-                                    ex -> orders.findById(order.getId()))
-                            .map(this::receipt);
-                });
+                    return orders.save(current).map(this::receipt);
+                })
+                .as(inventoryTransactions::transactional);
     }
 
     private Mono<Void> releaseLine(String orderId, OrderLine line) {
