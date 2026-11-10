@@ -15,7 +15,7 @@ import org.springframework.dao.OptimisticLockingFailureException;
 import reactor.test.StepVerifier;
 
 @ContextConfiguration(classes = PersistenceTests.MongoOnlyTestApplication.class)
-@DataMongoTest(properties = {"spring.cloud.config.enabled=false","spring.main.allow-bean-definition-overriding=true", "spring.cloud.config.enabled=false"})
+@DataMongoTest(properties = {"spring.cloud.config.enabled=false", "spring.data.mongodb.auto-index-creation=true"})
 class PersistenceTests extends MongoDbTestBase {
 
   // Avoid component-scanning the full product application from a Mongo test slice.
