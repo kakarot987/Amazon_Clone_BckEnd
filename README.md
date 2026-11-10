@@ -704,3 +704,47 @@ explicit Flyway/Liquibase migrations, backfill visibility for historical
 reviews, and test with real data before deploying to an existing
 database. Full integration and security checks are required before
 merging this draft.
+
+## Customer order history and order tracking (draft)
+
+Authenticated customers can review their own single-product order history.
+The existing `order:read` scope covers both new endpoints. The composite
+service derives the owner from the verified user's JWT issuer and subject,
+never a user-controlled query parameter. Application-only client-credentials
+tokens cannot browse personal orders.
+
+```http
+GET /product-composite/orders/history?page=0&size=20
+GET /product-composite/orders/history?page=0&size=20&status=MOCK_PAID
+GET /product-composite/orders/{orderId}/timeline
+```
+
+Order history is sorted newest-first by saved creation time, with a
+stable order-ID tiebreaker. It is database-paginated, uses a maximum
+page size of 50, and supports exact filters for the existing order
+states (including `RESERVED`, `MOCK_PAID`, `CANCELLED`, `EXPIRED`
+and payment states). Pagination reports total count and total pages.
+Each order response includes its original price, quantity, currency,
+payment status, and optional **mock** shipment and return summaries.
+
+A timeline assembles only **persisted, observed** events: order created;
+simulated payment started/completed; shipment milestones; and return
+milestones. Timestamps are chronological, not estimated. Earlier order
+state transitions such as cancellation and expiry have no separate
+persisted change timestamp, so those transitions are **not fabricated**
+as timeline events. Current state remains visible on the order record.
+
+The order history API is read-only. It does not re-run a checkout,
+reserve stock, capture a payment, initiate a shipment, or issue a refund.
+The project's `MOCK_PAID`, `MOCK_CARRIER` and `MOCK_REFUNDED`
+indicators are simulations, not proof of real-world purchases,
+deliveries or money movement.
+
+**Operational limits:** Multi-document reads across orders, shipments
+and returns are not a point-in-time MongoDB snapshot; concurrent
+updates can cause temporarily differing statuses. Deep offset paging
+can become expensive at scale. For large datasets, add an index on
+`ownerKey + createdAt + _id` (and an indexed variant with status),
+keyset pagination, monitoring, and retention policies. Keep the
+internal `/internal/order-history/**` routes private and review the
+full Java 17 CI + Testcontainers suite before merging.
