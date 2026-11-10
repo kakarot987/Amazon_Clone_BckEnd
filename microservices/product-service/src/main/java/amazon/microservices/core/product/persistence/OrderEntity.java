@@ -4,6 +4,9 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.Version;
 import org.springframework.data.mongodb.core.mapping.Document;
 import java.math.BigDecimal;
+import amazon.api.commerce.OrderLine;
+import java.util.List;
+import java.util.ArrayList;
 import java.time.Instant;
 import java.time.Duration;
 
@@ -28,6 +31,8 @@ public class OrderEntity {
     private int quantity;
     private String productName;
     private BigDecimal unitPrice;
+    // Snapshot of every checkout item; older orders use the legacy scalar columns.
+    private List<OrderLine> items;
     private String currency;
     private String status;
     private Instant createdAt;
@@ -51,6 +56,7 @@ public class OrderEntity {
         this.quantity = quantity;
         this.productName = name;
         this.unitPrice = price;
+        this.items = new ArrayList<>(List.of(new OrderLine(productId, quantity, name, price)));
         this.currency = currency;
         this.status = PENDING;
         this.createdAt = Instant.now();
@@ -63,6 +69,15 @@ public class OrderEntity {
     public int getQuantity() { return quantity; }
     public String getProductName() { return productName; }
     public BigDecimal getUnitPrice() { return unitPrice; }
+    public List<OrderLine> getItems() {
+        return items != null && !items.isEmpty() ? List.copyOf(items)
+                : (unitPrice == null ? List.of() :
+                    List.of(new OrderLine(productId, quantity, productName, unitPrice)));
+    }
+    public BigDecimal getTotal() {
+        return getItems().stream().map(OrderLine::lineTotal)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
     public String getCurrency() { return currency; }
     public String getStatus() { return status; }
     public Instant getCreatedAt() { return createdAt; }
@@ -82,6 +97,9 @@ public class OrderEntity {
     public void setQuantity(int quantity) { this.quantity = quantity; }
     public void setProductName(String name) { this.productName = name; }
     public void setUnitPrice(BigDecimal price) { this.unitPrice = price; }
+    public void setItems(List<OrderLine> items) {
+        this.items = items == null ? null : new ArrayList<>(items);
+    }
     public void setCurrency(String currency) { this.currency = currency; }
     public void setStatus(String status) { this.status = status; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
