@@ -75,3 +75,7 @@ Do not run the entire collection unattended: the post-create read is eventually 
 | 4:30–5:30 | CI run and constraints | Testcontainers, mock payments, auth limitations, planned saga recovery |
 
 Before publishing: remove sensitive values from terminal history and screenshots; ensure the demo actually works in your environment; link the **actual** recorded video and CI run in the README only after they exist. No deployment, recording, real payments, or real shipments are claimed by this documentation PR.
+
+## Optional aggregate reconciliation check
+
+With a separate operator token holding `fulfillment:read`, request `GET /product-composite/fulfillment/aggregates/{productId}/reconciliation` for the same demo product. During broker interruption the diagnostic may report `PUBLISH_PENDING`; after recovery rerun and inspect `OBSERVED`, `CONVERGING` or a failure state rather than assuming success. The check compares tracked IDs only and is **not** saga completion. See [status details](RECONCILIATION.md).

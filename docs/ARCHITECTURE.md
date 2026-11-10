@@ -78,3 +78,7 @@ Payment intents, signed **mock** webhooks, shipment state changes and refunds ar
 - Java 17 + Gradle 8.6 GitHub Actions exercises build/tests (including Testcontainers). A passing test run is not proof of end-to-end Docker runtime or production suitability.
 - Outbox and inbox records retain history; capacity, retention, secrets, high-availability, alerting and operator replay controls need further design.
 - See [demo](DEMO.md) for a reproducible broker-outage scenario and [full engineering notes](REFERENCE.md) for earlier milestones and test details.
+
+## Bounded distributed reconciliation audit
+
+An operator with `fulfillment:read` can query `GET /product-composite/fulfillment/aggregates/{productId}/reconciliation`. The endpoint compares a bounded history of outgoing event intent to independently fetched downstream product/recommendation/review identity sets. It distinguishes pending publication, unavailable consumers, recent convergence windows and possible drift. It **does not** retry, repair, compensate or prove global consistency. See [operator reconciliation runbook](RECONCILIATION.md).
