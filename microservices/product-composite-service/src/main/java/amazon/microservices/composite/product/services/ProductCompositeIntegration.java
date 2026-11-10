@@ -23,6 +23,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import amazon.api.core.product.Product;
 import amazon.api.core.product.ProductPage;
+import amazon.api.discovery.RelatedProducts;
 import amazon.api.core.product.ProductService;
 import amazon.api.core.recommendation.Recommendation;
 import amazon.api.core.recommendation.RecommendationService;
@@ -81,17 +82,32 @@ public class ProductCompositeIntegration implements ProductService, Recommendati
         this.serviceUtil = serviceUtil;
     }
 
-    /** Query the internal catalog through the discovery-aware WebClient. */
+    /** Backward-compatible listing used by existing composite consumers. */
     public Mono<ProductPage> listProducts(String query, String category, int page, int size) {
+        return listProducts(query, category, null, "productId", page, size);
+    }
+
+    /** Catalog discovery with validated stock and ordering controls. */
+    public Mono<ProductPage> listProducts(String query, String category, Boolean inStock,
+                                          String sort, int page, int size) {
         return webClient.get()
                 .uri(builder -> {
                     builder.scheme("http").host("product").path("/products")
-                            .queryParam("page", page).queryParam("size", size);
+                            .queryParam("page", page).queryParam("size", size)
+                            .queryParam("sort", sort);
                     if (query != null && !query.isBlank()) builder.queryParam("query", query);
                     if (category != null && !category.isBlank()) builder.queryParam("category", category);
+                    if (inStock != null) builder.queryParam("inStock", inStock);
                     return builder.build();
                 })
                 .retrieve().bodyToMono(ProductPage.class)
+                .onErrorMap(WebClientResponseException.class, this::handleException);
+    }
+
+    public Mono<RelatedProducts> relatedProducts(int productId, int limit) {
+        return webClient.get()
+                .uri("http://product/products/{id}/related?limit={limit}", productId, limit)
+                .retrieve().bodyToMono(RelatedProducts.class)
                 .onErrorMap(WebClientResponseException.class, this::handleException);
     }
 

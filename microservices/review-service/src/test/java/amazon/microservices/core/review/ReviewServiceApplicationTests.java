@@ -3,6 +3,8 @@ package amazon.microservices.core.review;
 import amazon.api.core.review.Review;
 import amazon.api.event.Event;
 import amazon.microservices.core.review.persistence.ReviewRepository;
+import amazon.microservices.core.review.persistence.CustomerReviewRepository;
+import amazon.api.discovery.CustomerReviewRequest;
 import amazon.util.exceptions.InvalidInputException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,12 +40,16 @@ class ReviewServiceApplicationTests extends MySqlTestBase {
   private ReviewRepository repository;
 
   @Autowired
+  private CustomerReviewRepository customerReviews;
+
+  @Autowired
   @Qualifier("messageProcessor")
   private Consumer<Event<Integer, Review>> messageProcessor;
 
   @BeforeEach
   void setupDb() {
     repository.deleteAll();
+    customerReviews.deleteAll();
   }
 
   @Test
@@ -146,6 +152,75 @@ class ReviewServiceApplicationTests extends MySqlTestBase {
       .expectStatus().isEqualTo(expectedStatus)
       .expectHeader().contentType(APPLICATION_JSON)
       .expectBody();
+  }
+
+
+  private static final String REVIEW_OWNER_A =
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  private static final String REVIEW_OWNER_B =
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+  @Test
+  void customerReviewsAreOwnedEditableAndAverageRatingsUseSqlAggregation() {
+    String ownerA = "/internal/customer-reviews/31/owner/" + REVIEW_OWNER_A;
+    String ownerB = "/internal/customer-reviews/31/owner/" + REVIEW_OWNER_B;
+    client.put().uri(ownerA).contentType(APPLICATION_JSON)
+      .bodyValue(new CustomerReviewRequest(5, "Excellent", "Loved this item"))
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.rating").isEqualTo(5)
+      .jsonPath("$.title").isEqualTo("Excellent");
+    client.put().uri(ownerA).contentType(APPLICATION_JSON)
+      .bodyValue(new CustomerReviewRequest(3, "Good", "Still useful"))
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.rating").isEqualTo(3);
+    client.put().uri(ownerB).contentType(APPLICATION_JSON)
+      .bodyValue(new CustomerReviewRequest(1, "Poor", "Not for me"))
+      .exchange().expectStatus().isOk();
+    assertEquals(2L, customerReviews.count());
+
+    client.get().uri("/internal/customer-reviews/31/ratings")
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.reviewCount").isEqualTo(2)
+      .jsonPath("$.averageRating").isEqualTo(2.0)
+      .jsonPath("$.starCounts['1']").isEqualTo(1)
+      .jsonPath("$.starCounts['3']").isEqualTo(1);
+
+    client.get().uri("/internal/customer-reviews/31?page=0&size=1&sort=highest")
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.totalElements").isEqualTo(2)
+      .jsonPath("$.totalPages").isEqualTo(2)
+      .jsonPath("$.reviews[0].rating").isEqualTo(3)
+      .jsonPath("$.reviews.length()").isEqualTo(1);
+
+    client.delete().uri(ownerB).exchange().expectStatus().isOk();
+    client.delete().uri(ownerB).exchange().expectStatus().isOk();
+    client.get().uri("/internal/customer-reviews/31/ratings")
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.reviewCount").isEqualTo(1)
+      .jsonPath("$.averageRating").isEqualTo(3.0);
+  }
+
+  @Test
+  void reviewsRejectInvalidInputsAndBoundPageSize() {
+    String url = "/internal/customer-reviews/32/owner/" + REVIEW_OWNER_A;
+    for (int invalidRating : new int[] {0, 6}) {
+      client.put().uri(url).contentType(APPLICATION_JSON)
+        .bodyValue(new CustomerReviewRequest(invalidRating, "Title", "Body"))
+        .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    }
+    client.put().uri(url).contentType(APPLICATION_JSON)
+      .bodyValue(new CustomerReviewRequest(4, " ", "Body"))
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.get().uri("/internal/customer-reviews/32?page=-1")
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.get().uri("/internal/customer-reviews/32?size=101")
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.get().uri("/internal/customer-reviews/32?sort=invalid")
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    client.get().uri("/internal/customer-reviews/32/ratings")
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.reviewCount").isEqualTo(0);
+    assertEquals(0L, customerReviews.count());
   }
 
   private void sendCreateReviewEvent(int productId, int reviewId) {

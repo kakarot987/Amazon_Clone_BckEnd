@@ -549,3 +549,89 @@ system, recommendation algorithm or inventory hold. Public access
 must pass through the authenticated Gateway; internal wishlist routes
 must remain private. Run the Java 17 CI tests and end-to-end checks
 before merging.
+
+## Product discovery, customer reviews and rating summaries (draft)
+
+This phase builds on the existing catalog and legacy review/recommendation
+microservices. It adds **authenticated customer reviews**, a MySQL-based
+ratings summary, and deterministic category-based discovery. It is not a
+personalized recommender or a verified-purchase review system.
+
+### Product discovery
+
+All requests go through the authenticated Gateway with `product:read`:
+
+```http
+GET /product-composite?query=laptop&category=computers&inStock=true&sort=stockDesc&page=0&size=20
+GET /product-composite/products/301/related?limit=6
+```
+
+`sort` supports `productId` (default), `productIdDesc`, `name` and
+`stockDesc`. Other sort names are rejected. `inStock=true` matches
+positive available stock, and `inStock=false` selects zero or untracked
+stock. Search matches literal substrings of name/description/SKU using
+case-insensitive regex with escaped user input; pagination is limited
+to 100 records per page. This is not a full-text index or fuzzy search.
+Related products have the same category, exclude the requested product,
+sort deterministically by product ID and return at most 20 suggestions.
+No similarity score, ranking personalization, advertisement, or user
+behavior tracking is claimed.
+
+### Verified-user identity and reviews
+
+A new MySQL `customer_reviews` table with a unique
+`(product_id, owner_key)` key stores **one customer review per product**.
+The owner key is derived from the validated JWT issuer and subject in
+the composite service; clients cannot supply a reviewer identity. App-only
+client-credentials JWTs cannot submit or remove personal reviews.
+
+```http
+PUT /product-composite/products/301/my-review
+Authorization: Bearer <signed-in-user-review-write-token>
+Content-Type: application/json
+
+{"rating":5,"title":"Excellent","content":"Useful for my work."}
+
+DELETE /product-composite/products/301/my-review
+Authorization: Bearer <signed-in-user-review-write-token>
+
+GET /product-composite/products/301/reviews?page=0&size=20&sort=newest
+Authorization: Bearer <review-read-token>
+
+GET /product-composite/products/301/ratings
+Authorization: Bearer <review-read-token>
+```
+
+Rating must be 1–5; title and content have length limits. Only the
+signed-in customer can update or remove their review. Repeated identical
+PUTs are idempotent. Public review responses omit private owner IDs.
+Review listing supports `newest`, `oldest`, `highest` and `lowest`;
+page sizes are capped at 100. The rating summary includes counts for
+1–5 stars, review count and average rounded to two decimals.
+The zero-review average is 0.
+
+**Important:** Customer reviews in this table are separate from the
+earlier demo/event-created `reviews` and `recommendations` endpoints.
+Only customer reviews are counted in the new rating summary. A customer
+is *not* required to have purchased the item to leave a review; do not
+label these as verified purchases. No content moderation, spam detection,
+abuse reports, administrative takedowns, or user privacy deletion jobs
+are implemented yet.
+
+### Deployment and verification
+
+Make sure the review service can run MySQL schema migrations. This
+prototype currently uses Spring Data JPA entities and the JPA auto-DDL
+setting from the runtime configuration repository. Before production,
+manage the new `customer_reviews` table, indexes and schema upgrades
+with Flyway or Liquibase instead of relying on auto-DDL.
+
+```sh
+gradle clean build
+docker compose build && docker compose up -d
+./scripts/smoke-test.sh
+```
+
+The new customer review endpoints run internally on the review service;
+do not publicly expose its port or allow clients to choose arbitrary
+owner keys. Validate JWT scopes at both the composite and Gateway.
