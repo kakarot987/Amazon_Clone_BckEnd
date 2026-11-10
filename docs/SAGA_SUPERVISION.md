@@ -47,3 +47,7 @@ The coordinator scans at most 10 due records per pass. Signed consumer receipt c
 ## Demonstration
 
 Use the default [Postman collection](../postman/Amazon-Clone-Backend.postman_collection.json): create a disposable aggregate; use operator-scoped requests to list operation IDs and check original receipts, then view the supervision record. In a safe local broker-outage exercise, it may show `WAITING` before `RECEIPTS_VERIFIED` after recovery. Results depend on actual runtime conditions. Document and show CI separately rather than promising a specific outcome.
+
+## Operator incident triage
+
+A separate [operator triage workflow](SAGA_TRIAGE.md) now lists `NEEDS_REVIEW` supervision records and accepts append-only, idempotent investigation notes on those cases only. Adding a note **does not** resolve/quarantine further, modify the supervision state, resend an event, compensate a saga or change any business data. Read requires `fulfillment:read`; writing a note requires `fulfillment:write` and a verified operator JWT. This remains a human investigation aid, not a recovery execution workflow.

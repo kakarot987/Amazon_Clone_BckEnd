@@ -91,3 +91,7 @@ With the operator JWT, call `GET /product-composite/fulfillment/operations/{oper
 ## Optional fenced-supervisor demonstration
 
 By default `APP_SAGA_ENABLED=false`, so new operation supervision records remain `PENDING`. To demonstrate transitions on **disposable** local infrastructure, configure a fresh 32+ byte `APP_RECEIPT_PROBE_SECRET` on all four services, explicitly set `APP_SAGA_ENABLED=true`, and restart `product-composite`. After a sample aggregate create, inspect `GET /product-composite/fulfillment/operations/{operationId}/supervision` with an operator token. Show the actual `WAITING`, `RECEIPTS_VERIFIED`, or `NEEDS_REVIEW` state; never presume full saga completion. Return to `APP_SAGA_ENABLED=false` after recording. See [supervision runbook](SAGA_SUPERVISION.md).
+
+## Optional incident triage demo
+
+Use the operator read endpoint `GET /product-composite/fulfillment/supervisions/review-queue?limit=20` to show durable operations flagged `NEEDS_REVIEW`. For such an operation only, an operator with a `fulfillment:write` JWT may add a synthetic incident note using a fresh `Idempotency-Key`, and list the note history via `GET /product-composite/fulfillment/operations/{operationId}/triage`. Sending the same key/content twice is idempotent; changing content under the same key returns 409. Do not enter tokens, secrets, customer data or real names into notes. The demonstration never replays or compensates events. See [triage runbook](SAGA_TRIAGE.md).
