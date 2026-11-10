@@ -2,6 +2,7 @@ package amazon.microservices.composite.product;
 
 import amazon.microservices.composite.product.services.ProductCompositeIntegration;
 import amazon.api.core.product.ProductPage;
+import amazon.api.discovery.RelatedProducts;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -120,6 +121,34 @@ public class ProductCompositeServiceApplicationTests {
             .contentType(APPLICATION_JSON).bodyValue(product)
             .exchange().expectStatus().isEqualTo(ACCEPTED);
         verify(compositeIntegration).updateProduct(any(Product.class));
+    }
+
+
+    @Test
+    void listProductsSupportsStockAndSorting() {
+        Product item = new Product(41, "Headphones", 1, null);
+        when(compositeIntegration.listProducts(eq("head"), eq("audio"),
+                eq(true), eq("stockDesc"), eq(0), eq(5)))
+            .thenReturn(Mono.just(new ProductPage(List.of(item), 0, 5, 1)));
+        client.get().uri("/product-composite?query=head&category=audio&inStock=true&sort=stockDesc&page=0&size=5")
+            .exchange().expectStatus().isOk()
+            .expectBody().jsonPath("$.products[0].productId").isEqualTo(41);
+
+        client.get().uri("/product-composite?sort=priceDesc")
+            .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    }
+
+    @Test
+    void exposesBoundedRelatedItems() {
+        Product other = new Product(42, "Similar item", 1, null);
+        when(compositeIntegration.relatedProducts(eq(41), eq(3)))
+            .thenReturn(Mono.just(new RelatedProducts(41, "shared-category", List.of(other))));
+        client.get().uri("/product-composite/products/41/related?limit=3")
+            .exchange().expectStatus().isOk()
+            .expectBody().jsonPath("$.basis").isEqualTo("shared-category")
+            .jsonPath("$.products[0].productId").isEqualTo(42);
+        client.get().uri("/product-composite/products/41/related?limit=100")
+            .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
     }
 
 	private WebTestClient.BodyContentSpec getAndVerifyProduct(int productId, HttpStatus expectedStatus) {
