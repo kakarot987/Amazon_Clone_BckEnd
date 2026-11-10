@@ -125,6 +125,7 @@ services:
       <<: *service-env
       SERVER_PORT: 8080
       APP_RECEIPT_PROBE_SECRET: ${APP_RECEIPT_PROBE_SECRET:?Set APP_RECEIPT_PROBE_SECRET in .env}
+      APP_SAGA_ENABLED: ${APP_SAGA_ENABLED:-false}
       SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/composite-outbox-db?replicaSet=rs0
       MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,info,prometheus
       MANAGEMENT_TRACING_SAMPLING_PROBABILITY: 0.1

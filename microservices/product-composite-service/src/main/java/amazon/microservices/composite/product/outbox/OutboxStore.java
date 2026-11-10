@@ -75,8 +75,11 @@ public class OutboxStore {
             AggregateOperation operation = new AggregateOperation(operationId, now,
                     new ArrayList<>(productIds), steps);
             // Operation intent and every event commit/rollback as ONE Mongo transaction.
+            SagaSupervision supervision = new SagaSupervision(operationId, now);
+            // Intent, outbox batch and supervision metadata commit atomically.
             return mongo.insert(operation)
                     .then(mongo.insert(batch, OutboxEntry.class).then())
+                    .then(mongo.insert(supervision).then())
                     .as(transactions::transactional);
         });
     }

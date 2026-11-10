@@ -7,6 +7,7 @@ import amazon.microservices.composite.product.outbox.OutboxDispatcher;
 import amazon.microservices.composite.product.outbox.OutboxEntry;
 import amazon.microservices.composite.product.outbox.OutboxStore;
 import amazon.microservices.composite.product.outbox.AggregateOperation;
+import amazon.microservices.composite.product.outbox.SagaSupervision;
 import amazon.microservices.composite.product.outbox.AggregateOperationTrackingService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -52,6 +53,7 @@ class OutboxPersistenceTests extends OutboxMongoTestBase {
     void reset() {
         mongo.remove(new Query(),OutboxEntry.class).block();
         mongo.remove(new Query(),AggregateOperation.class).block();
+        mongo.remove(new Query(),SagaSupervision.class).block();
     }
 
     private OutboundEvent product(int id, String name) {
@@ -70,6 +72,7 @@ class OutboxPersistenceTests extends OutboxMongoTestBase {
                 new OutboundEvent("reviews-out-0",new Event<>(DELETE,801,null)))).block();
         assertEquals(3L,count());
         assertEquals(1L, mongo.count(new Query(), AggregateOperation.class).block());
+        assertEquals(1L, mongo.count(new Query(), SagaSupervision.class).block());
         List<OutboxEntry> saved=mongo.findAll(OutboxEntry.class).collectList().block();
         assertNotNull(saved);
         assertTrue(saved.stream().allMatch(e -> OutboxEntry.PENDING.equals(e.getState())));
@@ -99,6 +102,8 @@ class OutboxPersistenceTests extends OutboxMongoTestBase {
         assertEquals(0L,count(),"MongoDB transaction must roll back first insert");
         assertEquals(0L, mongo.count(new Query(),AggregateOperation.class).block(),
                 "Atomic rollback must include aggregate operation journal");
+        assertEquals(0L, mongo.count(new Query(),SagaSupervision.class).block(),
+                "Atomic rollback must also include recovery supervision intent");
     }
 
     @Test

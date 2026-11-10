@@ -87,3 +87,7 @@ With a `fulfillment:read` operator JWT, call `GET /product-composite/fulfillment
 ## Optional verified consumer receipt demo
 
 With the operator JWT, call `GET /product-composite/fulfillment/operations/{operationId}/receipts` after examining a tracked operation. The endpoint uses a short-lived HMAC request to ask internal consumers whether their transactional inbox includes the original event ID and matching fingerprint. Observe `PUBLISH_PENDING`, `RECEIPTS_MISSING`, `INCONCLUSIVE`, `CONFLICT`, or `ALL_RECEIPTS_VERIFIED`; never claim success without inspecting the actual response. No recovery mutations are performed. See [receipt evidence guide](RECEIPTS.md).
+
+## Optional fenced-supervisor demonstration
+
+By default `APP_SAGA_ENABLED=false`, so new operation supervision records remain `PENDING`. To demonstrate transitions on **disposable** local infrastructure, configure a fresh 32+ byte `APP_RECEIPT_PROBE_SECRET` on all four services, explicitly set `APP_SAGA_ENABLED=true`, and restart `product-composite`. After a sample aggregate create, inspect `GET /product-composite/fulfillment/operations/{operationId}/supervision` with an operator token. Show the actual `WAITING`, `RECEIPTS_VERIFIED`, or `NEEDS_REVIEW` state; never presume full saga completion. Return to `APP_SAGA_ENABLED=false` after recording. See [supervision runbook](SAGA_SUPERVISION.md).
