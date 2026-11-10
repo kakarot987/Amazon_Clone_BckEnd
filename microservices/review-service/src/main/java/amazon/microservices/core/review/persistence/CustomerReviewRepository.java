@@ -12,11 +12,11 @@ import java.util.Optional;
 public interface CustomerReviewRepository extends JpaRepository<CustomerReviewEntity, Long> {
     Optional<CustomerReviewEntity> findByProductIdAndOwnerKey(int productId, String ownerKey);
 
-    Page<CustomerReviewEntity> findByProductId(int productId, Pageable pageable);
+    Page<CustomerReviewEntity> findByProductIdAndVisibility(int productId, String visibility, Pageable pageable);
 
     /** Database aggregation avoids fetching unbounded reviews into memory. */
     @Query("select r.rating as rating, count(r) as reviewCount " +
-           "from CustomerReviewEntity r where r.productId = :productId group by r.rating")
+           "from CustomerReviewEntity r where r.productId = :productId and r.visibility = 'VISIBLE' group by r.rating")
     List<RatingBucket> ratingCounts(@Param("productId") int productId);
 
     interface RatingBucket {
