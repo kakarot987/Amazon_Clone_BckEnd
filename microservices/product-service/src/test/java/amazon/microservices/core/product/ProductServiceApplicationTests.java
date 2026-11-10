@@ -1342,6 +1342,72 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
     assertEquals(1L, (long) orderRepository.count().block());
   }
 
+
+  @Test
+  void transactionRollsBackAllReservedLinesWhenLaterStockFails() {
+    addCheckoutProduct(851, 5, "USD", "10.00", 2);
+    addCheckoutProduct(852, 3, "USD", "8.00", 2);
+    var second = repository.findByProductId(852).block();
+    second.setStockQuantity(0);
+    repository.save(second).block();
+
+    client.post().uri("/internal/orders/" + CART_OWNER)
+      .header("Idempotency-Key", "atomic-failure-851")
+      .exchange().expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+
+    var firstAfter = repository.findByProductId(851).block();
+    assertEquals(5, firstAfter.getStockQuantity());
+    assertTrue(firstAfter.getReservedOrderIds() == null
+            || firstAfter.getReservedOrderIds().isEmpty());
+    assertEquals(0, repository.findByProductId(852).block().getStockQuantity());
+    assertEquals(OrderEntity.CANCELLED, orderRepository.findAll().blockFirst().getStatus());
+  }
+
+  @Test
+  void reconciliationIsReadOnlyAndFindsOrphanAndMissingOrderHolds() {
+    addCheckoutProduct(861, 9, "USD", "4.00", 2);
+    addCheckoutProduct(862, 8, "USD", "5.00", 1);
+    client.post().uri("/internal/orders/" + CART_OWNER)
+      .header("Idempotency-Key", "audit-holds-861")
+      .exchange().expectStatus().isOk();
+    OrderEntity order = orderRepository.findAll().blockFirst();
+    var p1 = repository.findByProductId(861).block();
+    var p2 = repository.findByProductId(862).block();
+    assertNotNull(p1);
+    assertNotNull(p2);
+    assertTrue(p1.getReservedOrderIds().contains(order.getId()));
+
+    // Corrupt one token intentionally; diagnostics must detect but not alter it.
+    p1.setReservedOrderIds(java.util.List.of(
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+    repository.save(p1).block();
+
+    client.get().uri("/internal/inventory/reconciliation")
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.truncated").isEqualTo(false)
+      .jsonPath("$.discrepancies.length()").isEqualTo(2);
+    assertEquals(7, repository.findByProductId(861).block().getStockQuantity());
+    assertEquals(7, repository.findByProductId(862).block().getStockQuantity());
+    assertEquals(1, repository.findByProductId(861).block().getReservedOrderIds().size());
+    assertEquals(OrderEntity.RESERVED, orderRepository.findById(order.getId()).block().getStatus());
+  }
+
+  @Test
+  void reconciliationReportsTerminalHoldsWithoutRestockingProducts() {
+    addCheckoutProduct(871, 5, "USD", "3.00", 1);
+    client.post().uri("/internal/orders/" + CART_OWNER)
+      .header("Idempotency-Key", "terminal-hold-871")
+      .exchange().expectStatus().isOk();
+    OrderEntity order = orderRepository.findAll().blockFirst();
+    order.setStatus(OrderEntity.MOCK_PAID);
+    orderRepository.save(order).block();
+
+    client.get().uri("/internal/inventory/reconciliation")
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.discrepancies[0].kind").isEqualTo("TERMINAL_ORDER_HOLD");
+    assertEquals(4, repository.findByProductId(871).block().getStockQuantity());
+  }
+
   private void sendCreateProductEvent(int productId) {
     Product product = new Product(productId, "Name " + productId, productId, "SA");
     Event<Integer, Product> event = new Event(CREATE, productId, product);
