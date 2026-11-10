@@ -37,7 +37,8 @@ import static org.springframework.http.MediaType.APPLICATION_JSON;
 				"spring.security.oauth2.resourceserver.jwt.issuer-uri=",
 				"spring.main.allow-bean-definition-overriding=true",
 				"eureka.client.enabled=false",
-				"spring.cloud.config.enabled=false","spring.cloud.compatibility-verifier.enabled=false"})
+				"spring.cloud.config.enabled=false","spring.cloud.compatibility-verifier.enabled=false",
+                "app.outbox.initial-delay-ms=600000"})
 public class ProductCompositeServiceApplicationTests {
 
 	private static final int PRODUCT_ID_OK = 1;

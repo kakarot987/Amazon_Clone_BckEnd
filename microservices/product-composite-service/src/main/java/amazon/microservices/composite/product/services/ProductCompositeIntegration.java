@@ -1,6 +1,9 @@
 package amazon.microservices.composite.product.services;
 
 import amazon.util.http.ServiceUtil;
+import amazon.microservices.composite.product.outbox.OutboxStore;
+import amazon.microservices.composite.product.outbox.OutboundEvent;
+import java.util.List;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
@@ -12,9 +15,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
-import org.springframework.messaging.Message;
-import org.springframework.messaging.MessageChannel;
-import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
@@ -47,7 +47,6 @@ import static amazon.api.event.Event.Type.DELETE;
 import static amazon.api.event.Event.Type.UPDATE;
 
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.cloud.stream.function.StreamBridge;
 
 import reactor.core.scheduler.Scheduler;
 @Component
@@ -59,26 +58,23 @@ public class ProductCompositeIntegration implements ProductService, Recommendati
     private static final String RECOMMENDATION_SERVICE_URL = "http://recommendation";
     private static final String REVIEW_SERVICE_URL = "http://review";
 
-    private final Scheduler publishEventScheduler;
     private final WebClient webClient;
     private final ObjectMapper mapper;
-    private final StreamBridge streamBridge;
+    private final OutboxStore outbox;
 
     private final ServiceUtil serviceUtil;
 
     @Autowired
     public ProductCompositeIntegration(
-            @Qualifier("publishEventScheduler") Scheduler publishEventScheduler,
             WebClient webClient,
             ObjectMapper mapper,
-            StreamBridge streamBridge,
+            OutboxStore outbox,
             ServiceUtil serviceUtil
     ) {
         this.webClient = webClient;
 
-        this.publishEventScheduler = publishEventScheduler;
         this.mapper = mapper;
-        this.streamBridge = streamBridge;
+        this.outbox = outbox;
         this.serviceUtil = serviceUtil;
     }
 
@@ -111,19 +107,20 @@ public class ProductCompositeIntegration implements ProductService, Recommendati
                 .onErrorMap(WebClientResponseException.class, this::handleException);
     }
 
+    /** Store all outgoing events as a single atomic batch before acknowledging. */
+    public Mono<Void> enqueueAggregate(List<OutboundEvent> messages) {
+        return outbox.enqueue(messages);
+    }
+
     public Mono<Void> updateProduct(Product body) {
-        return Mono.fromRunnable(() ->
-                sendMessage("products-out-0", new Event(UPDATE, body.getProductId(), body)))
-                .subscribeOn(publishEventScheduler).then();
+        return enqueueAggregate(List.of(new OutboundEvent("products-out-0",
+                new Event<>(UPDATE, body.getProductId(), body))));
     }
 
     @Override
     public Mono<Product> createProduct(Product body) {
-
-        return Mono.fromCallable(() -> {
-            sendMessage("products-out-0", new Event(CREATE, body.getProductId(), body));
-            return body;
-        }).subscribeOn(publishEventScheduler);
+        return enqueueAggregate(List.of(new OutboundEvent("products-out-0",
+                new Event<>(CREATE, body.getProductId(), body)))).thenReturn(body);
     }
 
     @Override
@@ -157,18 +154,14 @@ public class ProductCompositeIntegration implements ProductService, Recommendati
 
     @Override
     public Mono<Void> deleteProduct(int productId) {
-
-        return Mono.fromRunnable(() -> sendMessage("products-out-0", new Event(DELETE, productId, null)))
-                .subscribeOn(publishEventScheduler).then();
+        return enqueueAggregate(List.of(new OutboundEvent("products-out-0",
+                new Event<>(DELETE, productId, null))));
     }
 
     @Override
     public Mono<Recommendation> createRecommendation(Recommendation body) {
-
-        return Mono.fromCallable(() -> {
-            sendMessage("recommendations-out-0", new Event(CREATE, body.getProductId(), body));
-            return body;
-        }).subscribeOn(publishEventScheduler);
+        return enqueueAggregate(List.of(new OutboundEvent("recommendations-out-0",
+                new Event<>(CREATE, body.getProductId(), body)))).thenReturn(body);
     }
 
     @Override
@@ -184,18 +177,14 @@ public class ProductCompositeIntegration implements ProductService, Recommendati
 
     @Override
     public Mono<Void> deleteRecommendations(int productId) {
-
-        return Mono.fromRunnable(() -> sendMessage("recommendations-out-0", new Event(DELETE, productId, null)))
-                .subscribeOn(publishEventScheduler).then();
+        return enqueueAggregate(List.of(new OutboundEvent("recommendations-out-0",
+                new Event<>(DELETE, productId, null))));
     }
 
     @Override
     public Mono<Review> createReview(Review body) {
-
-        return Mono.fromCallable(() -> {
-            sendMessage("reviews-out-0", new Event(CREATE, body.getProductId(), body));
-            return body;
-        }).subscribeOn(publishEventScheduler);
+        return enqueueAggregate(List.of(new OutboundEvent("reviews-out-0",
+                new Event<>(CREATE, body.getProductId(), body)))).thenReturn(body);
     }
 
     @Override
@@ -211,19 +200,8 @@ public class ProductCompositeIntegration implements ProductService, Recommendati
 
     @Override
     public Mono<Void> deleteReviews(int productId) {
-
-        return Mono.fromRunnable(() -> sendMessage("reviews-out-0", new Event(DELETE, productId, null)))
-                .subscribeOn(publishEventScheduler).then();
-    }
-
-    private void sendMessage(String bindingName, Event event) {
-        LOG.debug("Sending a {} message to {}", event.getEventType(), bindingName);
-        Message message = MessageBuilder.withPayload(event)
-                .setHeader("partitionKey", event.getKey())
-                .build();
-        if (!streamBridge.send(bindingName, message)) {
-            throw new IllegalStateException("Failed to publish event to " + bindingName);
-        }
+        return enqueueAggregate(List.of(new OutboundEvent("reviews-out-0",
+                new Event<>(DELETE, productId, null))));
     }
 
     private Throwable handleException(Throwable ex) {

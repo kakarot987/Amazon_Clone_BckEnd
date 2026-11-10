@@ -1,6 +1,9 @@
 package amazon.microservices.composite.product;
 
 import amazon.api.composite.product.ProductAggregate;
+import amazon.microservices.composite.product.outbox.OutboxDispatcher;
+import amazon.microservices.composite.product.outbox.OutboxEntry;
+import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import amazon.api.composite.product.RecommendationSummary;
 import amazon.api.composite.product.ReviewSummary;
 import amazon.api.core.product.Product;
@@ -42,9 +45,10 @@ import static reactor.core.publisher.Mono.just;
 				"spring.main.allow-bean-definition-overriding=true",
 				"eureka.client.enabled=false",
 				"spring.cloud.stream.defaultBinder=rabbit",
-				"spring.cloud.config.enabled=false"})
+				"spring.cloud.config.enabled=false",
+                "app.outbox.initial-delay-ms=600000"})
 @Import({TestChannelBinderConfiguration.class})
-class MessagingTests {
+class MessagingTests extends OutboxMongoTestBase {
 
 	private static final Logger LOG = LoggerFactory.getLogger(MessagingTests.class);
 
@@ -54,8 +58,12 @@ class MessagingTests {
 	@Autowired
 	private OutputDestination target;
 
+	@Autowired private OutboxDispatcher dispatcher;
+	@Autowired private ReactiveMongoTemplate mongo;
+
 	@BeforeEach
 	void setUp() {
+        mongo.remove(new org.springframework.data.mongodb.core.query.Query(), OutboxEntry.class).block();
 		purgeMessages("products");
 		purgeMessages("recommendations");
 		purgeMessages("reviews");
@@ -185,6 +193,7 @@ class MessagingTests {
 				.body(just(compositeProduct), ProductAggregate.class)
 				.exchange()
 				.expectStatus().isEqualTo(expectedStatus);
+        dispatcher.dispatchOnce().block();
 	}
 
 	private void deleteAndVerifyProduct(int productId, HttpStatus expectedStatus) {
@@ -192,5 +201,6 @@ class MessagingTests {
 				.uri("/product-composite/" + productId)
 				.exchange()
 				.expectStatus().isEqualTo(expectedStatus);
+        dispatcher.dispatchOnce().block();
 	}
 }

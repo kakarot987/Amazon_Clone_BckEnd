@@ -1,6 +1,10 @@
 package amazon.microservices.composite.product.services;
 
 import amazon.api.composite.product.*;
+import amazon.api.event.Event;
+import amazon.microservices.composite.product.outbox.OutboundEvent;
+import static amazon.api.event.Event.Type.CREATE;
+import static amazon.api.event.Event.Type.DELETE;
 import static java.util.logging.Level.FINE;
 
 import java.net.URL;
@@ -55,48 +59,38 @@ public class ProductCompositeServiceImpl implements ProductCompositeService {
     }
 
     private Mono<Void> createProductInternal(ProductAggregate body) {
-        try {
+        // Save all destination-specific events in ONE MongoDB transaction.
+        // HTTP 202 means durable intent, NOT downstream processing completed.
+        List<OutboundEvent> messages = new ArrayList<>();
+        Product product = new Product(body.getProductId(), body.getName(), body.getWeight(), null);
+        product.setSku(body.getSku());
+        product.setDescription(body.getDescription());
+        product.setCategory(body.getCategory());
+        product.setPrice(body.getPrice());
+        product.setCurrency(body.getCurrency());
+        product.setStockQuantity(body.getStockQuantity());
+        product.setImageUrls(body.getImageUrls());
+        messages.add(new OutboundEvent("products-out-0",
+                new Event<>(CREATE,body.getProductId(),product)));
 
-            List<Mono> monoList = new ArrayList<>();
-
-            monoList.add(getLogAuthorizationInfoMono());
-
-            LOG.info("Will create a new composite entity for product.id: {}", body.getProductId());
-
-            Product product = new Product(body.getProductId(), body.getName(), body.getWeight(), null);
-            product.setSku(body.getSku());
-            product.setDescription(body.getDescription());
-            product.setCategory(body.getCategory());
-            product.setPrice(body.getPrice());
-            product.setCurrency(body.getCurrency());
-            product.setStockQuantity(body.getStockQuantity());
-            product.setImageUrls(body.getImageUrls());
-            monoList.add(integration.createProduct(product));
-
-            if (body.getRecommendations() != null) {
-                body.getRecommendations().forEach(r -> {
-                    Recommendation recommendation = new Recommendation(body.getProductId(), r.getRecommendationId(), r.getAuthor(), r.getRate(), r.getContent(), null);
-                    monoList.add(integration.createRecommendation(recommendation));
-                });
-            }
-
-            if (body.getReviews() != null) {
-                body.getReviews().forEach(r -> {
-                    Review review = new Review(body.getProductId(), r.getReviewId(), r.getAuthor(), r.getSubject(), r.getContent(), null);
-                    monoList.add(integration.createReview(review));
-                });
-            }
-
-            LOG.debug("createCompositeProduct: composite entities created for productId: {}", body.getProductId());
-
-            return Mono.zip(r -> "", monoList.toArray(new Mono[0]))
-                    .doOnError(ex -> LOG.warn("createCompositeProduct failed: {}", ex.toString()))
-                    .then();
-
-        } catch (RuntimeException re) {
-            LOG.warn("createCompositeProduct failed: {}", re.toString());
-            throw re;
+        if (body.getRecommendations() != null) {
+            body.getRecommendations().forEach(r -> messages.add(
+                    new OutboundEvent("recommendations-out-0",
+                            new Event<>(CREATE,body.getProductId(),
+                                    new Recommendation(body.getProductId(),r.getRecommendationId(),
+                                            r.getAuthor(),r.getRate(),r.getContent(),null)))));
         }
+        if (body.getReviews() != null) {
+            body.getReviews().forEach(r -> messages.add(
+                    new OutboundEvent("reviews-out-0",
+                            new Event<>(CREATE,body.getProductId(),
+                                    new Review(body.getProductId(),r.getReviewId(),r.getAuthor(),
+                                            r.getSubject(),r.getContent(),null)))));
+        }
+        return getLogAuthorizationInfoMono()
+                .then(integration.enqueueAggregate(messages))
+                .doOnError(error -> LOG.warn("Could not persist product aggregate event batch: {}",
+                        error.getClass().getSimpleName()));
     }
 
     @Override
@@ -123,22 +117,14 @@ public class ProductCompositeServiceImpl implements ProductCompositeService {
     }
 
     private Mono<Void> deleteProductInternal(int productId) {
-        try {
-
-            LOG.info("Will delete a product aggregate for product.id: {}", productId);
-
-            return Mono.zip(r -> "",
-                            getLogAuthorizationInfoMono(),
-                            integration.deleteProduct(productId),
-                            integration.deleteRecommendations(productId),
-                            integration.deleteReviews(productId))
-                    .doOnError(ex -> LOG.warn("delete failed: {}", ex.toString()))
-                    .log(LOG.getName(), FINE).then();
-
-        } catch (RuntimeException re) {
-            LOG.warn("deleteCompositeProduct failed: {}", re.toString());
-            throw re;
-        }
+        List<OutboundEvent> messages = List.of(
+                new OutboundEvent("products-out-0",new Event<>(DELETE,productId,null)),
+                new OutboundEvent("recommendations-out-0",new Event<>(DELETE,productId,null)),
+                new OutboundEvent("reviews-out-0",new Event<>(DELETE,productId,null)));
+        return getLogAuthorizationInfoMono()
+                .then(integration.enqueueAggregate(messages))
+                .doOnError(error -> LOG.warn("Could not persist delete batch: {}",
+                        error.getClass().getSimpleName()));
     }
 
     private <T> T observationWithProductInfo(int productInfo, Supplier<T> supplier) {
