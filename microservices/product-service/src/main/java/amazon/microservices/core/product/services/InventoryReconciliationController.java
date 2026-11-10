@@ -39,13 +39,16 @@ public class InventoryReconciliationController {
     private final ReactiveMongoTemplate mongo;
     private final ProductRepository products;
     private final OrderRepository orders;
+    private final CommerceObservability observability;
 
     public InventoryReconciliationController(ReactiveMongoTemplate mongo,
                                              ProductRepository products,
-                                             OrderRepository orders) {
+                                             OrderRepository orders,
+                                             CommerceObservability observability) {
         this.mongo = mongo;
         this.products = products;
         this.orders = orders;
+        this.observability = observability;
     }
 
     @GetMapping("/reconciliation")
@@ -78,6 +81,10 @@ public class InventoryReconciliationController {
                                 List<InventoryDiscrepancy> findings = new ArrayList<>();
                                 found.getT1().forEach(findings::addAll);
                                 found.getT2().forEach(findings::addAll);
+                                observability.auditRun(truncated);
+                                findings.stream().collect(java.util.stream.Collectors.groupingBy(
+                                        InventoryDiscrepancy::kind, java.util.stream.Collectors.counting()))
+                                        .forEach(observability::auditFindings);
                                 return new InventoryReconciliationReport(Instant.now(),
                                         productPage.size(), orderPage.size(), truncated,
                                         List.copyOf(findings));
