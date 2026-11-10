@@ -39,7 +39,7 @@ public class OrderHistoryController {
     private static final int MAX_PAGE_SIZE = 50;
     private static final Set<String> ALLOWED_STATUSES = Set.of(
             OrderEntity.PENDING, OrderEntity.RESERVED,
-            OrderEntity.CANCELLATION_PENDING, OrderEntity.CANCELLED,
+            OrderEntity.RESERVING, OrderEntity.CANCELLATION_PENDING, OrderEntity.CANCELLED,
             OrderEntity.EXPIRATION_PENDING, OrderEntity.EXPIRED,
             OrderEntity.PAYMENT_PENDING, OrderEntity.PAYMENT_CONFIRMING,
             OrderEntity.MOCK_PAID, OrderEntity.PAYMENT_FAILED_PENDING,
