@@ -77,6 +77,18 @@ class OAuth2AuthorizationServerApplicationTests {
 	}
 
 	@Test
+	void mockReturnsOperatorHasDedicatedScopes() throws Exception {
+		String credentials = Base64.getEncoder().encodeToString(
+			"mock-returns:test-returns-client-secret".getBytes());
+		this.mvc.perform(post("/oauth2/token")
+				.param("grant_type", "client_credentials")
+				.param("scope", "returns:read returns:manage")
+				.header("Authorization", "Basic " + credentials))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.access_token").exists());
+	}
+
+	@Test
 	void requestOpenidConfiguration() throws Exception {
 
 		this.mvc.perform(get("/.well-known/openid-configuration"))
