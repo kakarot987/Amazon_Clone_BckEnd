@@ -2,6 +2,7 @@ package amazon.microservices.core.product.services;
 
 import amazon.api.core.product.Product;
 import amazon.api.core.product.ProductPage;
+import amazon.api.discovery.RelatedProducts;
 import amazon.microservices.core.product.persistence.ProductEntity;
 import amazon.microservices.core.product.persistence.ProductRepository;
 import amazon.util.exceptions.InvalidInputException;
@@ -17,6 +18,8 @@ import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
 
 import java.util.regex.Pattern;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Internal catalog API. Public traffic should go through the protected
@@ -41,33 +44,47 @@ public class ProductCatalogController implements ProductCatalogOperations {
     public Mono<ProductPage> listProducts(
             @RequestParam(required = false) String query,
             @RequestParam(required = false) String category,
+            @RequestParam(required = false) Boolean inStock,
+            @RequestParam(defaultValue = "productId") String sort,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        if (page < 0 || size < 1 || size > 100 || ((long) page * size) > Integer.MAX_VALUE) {
-            throw new InvalidInputException("page must be >= 0 and size must be 1-100");
-        }
-        if (query != null && query.length() > 100) {
+        validatePage(page, size);
+        if (query != null && query.length() > 100)
             throw new InvalidInputException("query must be at most 100 characters");
-        }
-        if (category != null && category.length() > 120) {
+        if (category != null && category.length() > 120)
             throw new InvalidInputException("category must be at most 120 characters");
-        }
+        Sort ordering = switch (sort) {
+            case "productId" -> Sort.by(Sort.Direction.ASC, "productId");
+            case "productIdDesc" -> Sort.by(Sort.Direction.DESC, "productId");
+            case "name" -> Sort.by(Sort.Direction.ASC, "name").and(Sort.by("productId"));
+            case "stockDesc" -> Sort.by(Sort.Direction.DESC, "stockQuantity")
+                    .and(Sort.by("productId"));
+            default -> throw new InvalidInputException(
+                    "sort must be productId, productIdDesc, name or stockDesc");
+        };
 
-        Criteria criteria = new Criteria();
+        List<Criteria> conditions = new ArrayList<>();
         if (query != null && !query.isBlank()) {
             String safe = Pattern.quote(query.trim());
-            criteria = criteria.orOperator(Criteria.where("name").regex(safe, "i"),
-                Criteria.where("description").regex(safe, "i"),
-                Criteria.where("sku").regex(safe, "i"));
+            conditions.add(new Criteria().orOperator(
+                    Criteria.where("name").regex(safe, "i"),
+                    Criteria.where("description").regex(safe, "i"),
+                    Criteria.where("sku").regex(safe, "i")));
         }
-        if (category != null && !category.isBlank()) {
-            criteria = criteria.and("category").is(category.trim());
-        }
-        Query countQuery = Query.query(criteria);
-        Query resultsQuery = Query.query(criteria)
-                .with(Sort.by(Sort.Direction.ASC, "productId"))
-                .skip((long) page * size)
-                .limit(size);
+        if (category != null && !category.isBlank())
+            conditions.add(Criteria.where("category").is(category.trim()));
+        if (inStock != null)
+            conditions.add(Boolean.TRUE.equals(inStock)
+                    ? Criteria.where("stockQuantity").gt(0)
+                    : new Criteria().orOperator(
+                        Criteria.where("stockQuantity").lte(0),
+                        Criteria.where("stockQuantity").exists(false)));
+
+        Query countQuery = conditions.isEmpty() ? new Query()
+                : Query.query(new Criteria().andOperator(conditions.toArray(new Criteria[0])));
+        Query resultsQuery = conditions.isEmpty() ? new Query()
+                : Query.query(new Criteria().andOperator(conditions.toArray(new Criteria[0])));
+        resultsQuery.with(ordering).skip((long) page * size).limit(size);
         return Mono.zip(
                 template.find(resultsQuery, ProductEntity.class)
                         .map(mapper::entityToApi)
@@ -75,6 +92,37 @@ public class ProductCatalogController implements ProductCatalogOperations {
                         .collectList(),
                 template.count(countQuery, ProductEntity.class))
                 .map(tuple -> new ProductPage(tuple.getT1(), page, size, tuple.getT2()));
+    }
+
+    /**
+     * Simple deterministic, category-based discovery, not personalized ranking.
+     * Excludes the source product and does not claim availability or similarity scores.
+     */
+    @GetMapping("/products/{productId}/related")
+    public Mono<RelatedProducts> relatedProducts(@PathVariable int productId,
+                                                  @RequestParam(defaultValue = "6") int limit) {
+        if (productId < 1 || limit < 1 || limit > 20)
+            throw new InvalidInputException("productId must be positive and limit must be 1-20");
+        return repository.findByProductId(productId)
+                .switchIfEmpty(Mono.error(new NotFoundException(
+                        "No product found for productId: " + productId)))
+                .flatMap(source -> {
+                    if (source.getCategory() == null || source.getCategory().isBlank())
+                        return Mono.just(new RelatedProducts(productId, "shared-category", List.of()));
+                    Query similar = Query.query(new Criteria().andOperator(
+                            Criteria.where("category").is(source.getCategory()),
+                            Criteria.where("productId").ne(productId)))
+                            .with(Sort.by("productId")).limit(limit);
+                    return template.find(similar, ProductEntity.class)
+                            .map(mapper::entityToApi).map(this::withAddress)
+                            .collectList()
+                            .map(items -> new RelatedProducts(productId, "shared-category", items));
+                });
+    }
+
+    private void validatePage(int page, int size) {
+        if (page < 0 || size < 1 || size > 100 || (long) page * size > Integer.MAX_VALUE)
+            throw new InvalidInputException("page must be >= 0 and size must be 1-100");
     }
 
     @PutMapping(value = "/product/{productId}", consumes = "application/json")
