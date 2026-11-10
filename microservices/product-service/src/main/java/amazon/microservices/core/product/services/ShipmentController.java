@@ -96,7 +96,7 @@ public class ShipmentController {
         if (update == null || update.eventId() == null
                 || !update.eventId().matches("[A-Za-z0-9._-]{8,100}"))
             throw new InvalidInputException("eventId must be 8-100 safe characters");
-        if (!List.of("PACKED", "SHIPPED", "IN_TRANSIT", "DELIVERED")
+        if (update.status() == null || !List.of("PACKED", "SHIPPED", "IN_TRANSIT", "DELIVERED")
                 .contains(update.status()))
             throw new InvalidInputException("Invalid simulated shipment milestone");
 
