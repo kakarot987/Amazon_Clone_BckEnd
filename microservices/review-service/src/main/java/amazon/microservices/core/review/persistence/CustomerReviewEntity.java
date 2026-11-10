@@ -42,6 +42,12 @@ public class CustomerReviewEntity {
     private String content;
 
     @Column(nullable = false)
+    private boolean mockPurchaseConfirmed;
+
+    @Column(nullable = false, length = 12)
+    private String visibility = "VISIBLE";
+
+    @Column(nullable = false)
     private Instant createdAt;
 
     @Column(nullable = false)
@@ -56,6 +62,7 @@ public class CustomerReviewEntity {
         this.rating = rating;
         this.title = title;
         this.content = content;
+        this.visibility = "VISIBLE";
         this.createdAt = Instant.now();
         this.updatedAt = this.createdAt;
     }
@@ -67,6 +74,8 @@ public class CustomerReviewEntity {
     public int getRating() { return rating; }
     public String getTitle() { return title; }
     public String getContent() { return content; }
+    public boolean isMockPurchaseConfirmed() { return mockPurchaseConfirmed; }
+    public String getVisibility() { return visibility; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 
@@ -77,6 +86,8 @@ public class CustomerReviewEntity {
     public void setRating(int rating) { this.rating = rating; }
     public void setTitle(String title) { this.title = title; }
     public void setContent(String content) { this.content = content; }
+    public void setMockPurchaseConfirmed(boolean value) { this.mockPurchaseConfirmed = value; }
+    public void setVisibility(String value) { this.visibility = value; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
 }
