@@ -44,6 +44,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
     "AUTH_READER_CLIENT_SECRET=secret-reader",
     "AUTH_DEMO_USER=test-user",
     "AUTH_DEMO_PASSWORD=test-password",
+    "AUTH_FULFILLMENT_CLIENT_SECRET=test-fulfillment-client-secret",
     "AUTH_ISSUER_URI=http://localhost:9999"
 })
 @AutoConfigureMockMvc
@@ -60,6 +61,18 @@ class OAuth2AuthorizationServerApplicationTests {
 						.param("grant_type", "client_credentials")
 						.header("Authorization", "Basic " + base64Credentials))
 				.andExpect(status().isOk());
+	}
+
+	@Test
+	void dedicatedMockFulfillmentClientUsesClientCredentials() throws Exception {
+		String credentials = Base64.getEncoder().encodeToString(
+			"mock-fulfillment:test-fulfillment-client-secret".getBytes());
+		this.mvc.perform(post("/oauth2/token")
+				.param("grant_type", "client_credentials")
+				.param("scope", "fulfillment:read fulfillment:write")
+				.header("Authorization", "Basic " + credentials))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.access_token").exists());
 	}
 
 	@Test
