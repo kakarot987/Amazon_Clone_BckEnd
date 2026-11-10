@@ -1,0 +1,13 @@
+# Optional override: supply a pre-generated PKCS12 signing keystore.
+# Use with: docker compose -f docker-compose.yml -f docker-compose-auth-keys.yml up
+services:
+  auth-server:
+    environment:
+      AUTH_SECURITY_STRICT: "true"
+      AUTH_REQUIRE_PERSISTENT_KEYS: "true"
+      AUTH_JWT_KEYSTORE_PATH: /run/auth-keys/signing.p12
+      AUTH_JWT_KEYSTORE_PASSWORD: ${AUTH_JWT_KEYSTORE_PASSWORD:?Set a strong AUTH_JWT_KEYSTORE_PASSWORD in .env}
+      AUTH_JWT_KEY_ALIAS: ${AUTH_JWT_KEY_ALIAS:-jwt-signing}
+      AUTH_JWT_KEY_PASSWORD: ${AUTH_JWT_KEY_PASSWORD:?Set a strong AUTH_JWT_KEY_PASSWORD in .env}
+    volumes:
+      - ./secrets/auth-signing.p12:/run/auth-keys/signing.p12:ro
