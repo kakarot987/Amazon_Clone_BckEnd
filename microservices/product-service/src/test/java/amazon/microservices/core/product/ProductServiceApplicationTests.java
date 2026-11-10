@@ -1313,6 +1313,35 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
     assertEquals(4, repository.findByProductId(761).block().getStockQuantity());
   }
 
+
+  @Test
+  void simultaneousCheckoutRetriesOnlyHoldStockOnce() {
+    addCheckoutProduct(771, 10, "USD", "2.00", 3);
+    addCheckoutProduct(772, 10, "USD", "5.00", 2);
+    java.util.List<Integer> results = reactor.core.publisher.Flux.range(0, 8)
+      .flatMap(i -> reactor.core.publisher.Mono.fromCallable(() ->
+          client.post().uri("/internal/orders/" + CART_OWNER)
+            .header("Idempotency-Key", "simultaneous-checkout-771")
+            .exchange().returnResult(String.class).getStatus().value())
+          .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic()))
+      .collectList().block(java.time.Duration.ofSeconds(30));
+    assertNotNull(results);
+    assertEquals(8, results.size());
+    assertTrue(results.stream().allMatch(code -> code == 200),
+        "Concurrent retries must all return an existing or in-progress order");
+    OrderEntity order = orderRepository.findAll().blockFirst();
+    assertNotNull(order);
+    if (OrderEntity.RESERVING.equals(order.getStatus())) {
+      // An active claim has to finish or expire before reconciliation.
+      assertNotNull(order.getReservationLeaseId());
+    } else {
+      assertEquals(OrderEntity.RESERVED, order.getStatus());
+    }
+    assertEquals(7, repository.findByProductId(771).block().getStockQuantity());
+    assertEquals(8, repository.findByProductId(772).block().getStockQuantity());
+    assertEquals(1L, (long) orderRepository.count().block());
+  }
+
   private void sendCreateProductEvent(int productId) {
     Product product = new Product(productId, "Name " + productId, productId, "SA");
     Event<Integer, Product> event = new Event(CREATE, productId, product);
