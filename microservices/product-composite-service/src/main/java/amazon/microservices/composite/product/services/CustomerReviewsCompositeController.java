@@ -3,6 +3,7 @@ package amazon.microservices.composite.product.services;
 import amazon.api.discovery.CustomerReview;
 import amazon.api.discovery.CustomerReviewPage;
 import amazon.api.discovery.CustomerReviewRequest;
+import amazon.api.discovery.VerifiedCustomerReviewSubmission;
 import amazon.api.discovery.RatingSummary;
 import amazon.util.exceptions.InvalidInputException;
 import org.springframework.http.HttpStatus;
@@ -53,14 +54,23 @@ public class CustomerReviewsCompositeController {
                                        @RequestBody CustomerReviewRequest request) {
         String owner = CommerceCompositeController.ownerKey(jwt);
         validateProductId(productId);
+        if (request == null || request.rating() < 1 || request.rating() > 5
+                || request.title() == null || request.title().isBlank()
+                || request.content() == null || request.content().isBlank())
+            throw new InvalidInputException("Valid review rating, title and content required");
         // Do not create reviews for missing products; internal review service
         // does not have direct access to the product catalog.
         return webClient.get().uri("http://product/product/{id}", productId)
                 .retrieve().bodyToMono(amazon.api.core.product.Product.class)
                 .onErrorMap(this::mapError)
-                .then(webClient.put()
+                .then(webClient.get()
+                        .uri("http://product/internal/review-eligibility/{owner}/product/{id}", owner, productId)
+                        .retrieve().bodyToMono(Boolean.class).onErrorMap(this::mapError))
+                .flatMap(eligible -> webClient.put()
                         .uri("http://review/internal/customer-reviews/{id}/owner/{owner}", productId, owner)
-                        .contentType(MediaType.APPLICATION_JSON).bodyValue(request)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .bodyValue(new VerifiedCustomerReviewSubmission(
+                                request.rating(), request.title(), request.content(), eligible))
                         .retrieve().bodyToMono(CustomerReview.class).onErrorMap(this::mapError));
     }
 

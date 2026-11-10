@@ -46,6 +46,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
     "AUTH_DEMO_PASSWORD=test-password",
     "AUTH_FULFILLMENT_CLIENT_SECRET=test-fulfillment-client-secret",
     "AUTH_RETURNS_CLIENT_SECRET=test-returns-client-secret",
+    "AUTH_MODERATOR_CLIENT_SECRET=test-review-moderator-secret",
     "AUTH_ISSUER_URI=http://localhost:9999"
 })
 @AutoConfigureMockMvc
@@ -83,6 +84,18 @@ class OAuth2AuthorizationServerApplicationTests {
 		this.mvc.perform(post("/oauth2/token")
 				.param("grant_type", "client_credentials")
 				.param("scope", "returns:read returns:manage")
+				.header("Authorization", "Basic " + credentials))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.access_token").exists());
+	}
+
+	@Test
+	void moderatorClientHasIsolatedScope() throws Exception {
+		String credentials = Base64.getEncoder().encodeToString(
+			"mock-review-moderator:test-review-moderator-secret".getBytes());
+		this.mvc.perform(post("/oauth2/token")
+				.param("grant_type", "client_credentials")
+				.param("scope", "review:moderate")
 				.header("Authorization", "Basic " + credentials))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.access_token").exists());

@@ -2,12 +2,11 @@ package amazon.microservices.core.review.services;
 
 import amazon.api.discovery.CustomerReview;
 import amazon.api.discovery.CustomerReviewPage;
-import amazon.api.discovery.CustomerReviewRequest;
+import amazon.api.discovery.VerifiedCustomerReviewSubmission;
 import amazon.api.discovery.RatingSummary;
 import amazon.microservices.core.review.persistence.CustomerReviewEntity;
 import amazon.microservices.core.review.persistence.CustomerReviewRepository;
 import amazon.util.exceptions.InvalidInputException;
-import amazon.util.exceptions.NotFoundException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.domain.Page;
@@ -40,7 +39,7 @@ public class CustomerReviewController {
 
     @PutMapping(value = "/{productId}/owner/{ownerKey}", consumes = "application/json")
     public Mono<CustomerReview> put(@PathVariable int productId, @PathVariable String ownerKey,
-                                    @RequestBody CustomerReviewRequest request) {
+                                    @RequestBody VerifiedCustomerReviewSubmission request) {
         validateProduct(productId);
         validateOwner(ownerKey);
         validateRequest(request);
@@ -48,14 +47,16 @@ public class CustomerReviewController {
             CustomerReviewEntity entity = repository.findByProductIdAndOwnerKey(productId, ownerKey)
                     .orElseGet(() -> new CustomerReviewEntity(
                             productId, ownerKey, request.rating(), request.title(), request.content()));
-            // Repeated identical PUTs are idempotent, including updatedAt.
+            // Once a mock purchase is proven, later edits cannot erase that provenance.
             String normalizedTitle = request.title().trim();
             String normalizedContent = request.content().trim();
             if (entity.getId() != null
+                    && (entity.isMockPurchaseConfirmed() || !request.verifiedMockPurchase())
                     && entity.getRating() == request.rating()
                     && entity.getTitle().equals(normalizedTitle)
                     && entity.getContent().equals(normalizedContent))
                 return publicReview(entity);
+            entity.setMockPurchaseConfirmed(entity.isMockPurchaseConfirmed() || request.verifiedMockPurchase());
             entity.setRating(request.rating());
             entity.setTitle(normalizedTitle);
             entity.setContent(normalizedContent);
@@ -99,8 +100,8 @@ public class CustomerReviewController {
             default -> Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by("id"));
         };
         return Mono.fromCallable(() -> {
-            Page<CustomerReviewEntity> results = repository.findByProductId(
-                    productId, PageRequest.of(page, size, ordering));
+            Page<CustomerReviewEntity> results = repository.findByProductIdAndVisibility(
+                    productId, "VISIBLE", PageRequest.of(page, size, ordering));
             return new CustomerReviewPage(results.getContent().stream().map(this::publicReview).toList(),
                     page, size, results.getTotalElements(), results.getTotalPages());
         }).subscribeOn(scheduler);
@@ -128,11 +129,12 @@ public class CustomerReviewController {
     }
 
     private CustomerReview publicReview(CustomerReviewEntity entity) {
-        return new CustomerReview(entity.getProductId(), entity.getRating(),
-                entity.getTitle(), entity.getContent(), entity.getCreatedAt(), entity.getUpdatedAt());
+        return new CustomerReview(entity.getId(), entity.getProductId(), entity.getRating(),
+                entity.getTitle(), entity.getContent(), entity.getCreatedAt(), entity.getUpdatedAt(),
+                entity.isMockPurchaseConfirmed());
     }
 
-    private void validateRequest(CustomerReviewRequest r) {
+    private void validateRequest(VerifiedCustomerReviewSubmission r) {
         if (r == null || r.rating() < 1 || r.rating() > 5
                 || r.title() == null || r.title().isBlank() || r.title().length() > 120
                 || r.content() == null || r.content().isBlank() || r.content().length() > 2000)

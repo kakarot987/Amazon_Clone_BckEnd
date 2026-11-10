@@ -110,6 +110,7 @@ public class AuthorizationServerConfig {
       @Value("${AUTH_READER_CLIENT_SECRET}") String readerClientSecret,
       @Value("${AUTH_FULFILLMENT_CLIENT_SECRET}") String fulfillmentClientSecret,
       @Value("${AUTH_RETURNS_CLIENT_SECRET}") String returnsClientSecret,
+      @Value("${AUTH_MODERATOR_CLIENT_SECRET}") String moderatorClientSecret,
       PasswordEncoder passwordEncoder) {
     RegisteredClient writerClient = RegisteredClient.withId(UUID.randomUUID().toString())
       .clientId("writer")
@@ -129,6 +130,7 @@ public class AuthorizationServerConfig {
       .scope("wishlist:write")
       .scope("review:read")
       .scope("review:write")
+      .scope("review:report")
       .scope("order:read")
       .scope("order:write")
       .scope("return:read")
@@ -153,6 +155,7 @@ public class AuthorizationServerConfig {
       .scope("cart:read")
       .scope("wishlist:read")
       .scope("review:read")
+      .scope("review:report")
       .scope("order:read")
       .scope("return:read")
       .scope("inventory:read")
@@ -183,7 +186,17 @@ public class AuthorizationServerConfig {
       .tokenSettings(TokenSettings.builder().accessTokenTimeToLive(Duration.ofMinutes(15)).build())
       .build();
 
-    return new InMemoryRegisteredClientRepository(writerClient, readerClient, fulfillmentClient, returnsClient);
+        // Dedicated operator only. No customer token gets review:moderate.
+    RegisteredClient moderatorClient = RegisteredClient.withId(UUID.randomUUID().toString())
+      .clientId("mock-review-moderator")
+      .clientSecret(passwordEncoder.encode(moderatorClientSecret))
+      .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+      .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+      .scope("review:moderate")
+      .tokenSettings(TokenSettings.builder().accessTokenTimeToLive(Duration.ofMinutes(15)).build())
+      .build();
+
+    return new InMemoryRegisteredClientRepository(writerClient, readerClient, fulfillmentClient, returnsClient, moderatorClient);
 
   }
 

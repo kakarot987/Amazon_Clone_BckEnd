@@ -635,3 +635,72 @@ docker compose build && docker compose up -d
 The new customer review endpoints run internally on the review service;
 do not publicly expose its port or allow clients to choose arbitrary
 owner keys. Validate JWT scopes at both the composite and Gateway.
+
+## Mock-purchase review provenance and abuse moderation (draft)
+
+**The purchase indicator is simulated, not a verified real-world purchase.**
+A review may display `mockPurchaseConfirmed: true` when the product service
+finds a `MOCK_PAID` order for the authenticated reviewer and the exact
+product ID. The composite service derives the owner from the verified JWT,
+checks the product, then queries the private
+`/internal/review-eligibility/{ownerKey}/product/{productId}` API. A
+user cannot submit or overwrite the internal confirmation flag through
+the public review API. Repeated edits preserve a previously confirmed
+mock-purchase indicator. This is not evidence of actual payment, shipment,
+or ownership of goods.
+
+### Customer review reports
+
+Review listing now exposes an opaque numeric `reviewId` used to flag
+content. A signed-in user with `review:report` can call:
+
+```http
+POST /product-composite/products/{productId}/reviews/{reviewId}/report
+Content-Type: application/json
+
+{"reasonCode":"SPAM"}
+```
+
+Other reason codes are `ABUSE`, `OFF_TOPIC`, and `MISLEADING`.
+Only one report per customer and review is persisted. Self-reporting,
+reason changes, and arbitrary free-text PII are rejected. Reports do
+not immediately hide a review; a moderator must make that decision.
+
+### Independent mock moderator
+
+Use a separate development-only OAuth client `mock-review-moderator`
+with the `review:moderate` scope. Set a unique
+`AUTH_MODERATOR_CLIENT_SECRET` in the ignored `.env`, then recreate
+the auth-server container. No customer or ordinary writer client has
+the moderation scope.
+
+```http
+GET /product-composite/moderation/reports?page=0&size=20
+GET /product-composite/moderation/products/{productId}/reviews/{reviewId}
+
+POST /product-composite/moderation/products/{productId}/reviews/{reviewId}/decision
+Content-Type: application/json
+
+{"eventId":"moderation-action-1234","action":"HIDE","reasonCode":"SPAM"}
+```
+
+Use `RESTORE` to make a hidden review public again. Audit event IDs
+are unique and idempotent; conflicting replays are rejected. A hidden
+review is excluded from public review pages **and the star-rating
+average and distribution**, but remains available to authorized
+moderation operators for investigation. Editing a hidden review does
+not automatically make it visible.
+
+The internal review service must remain private: its `/internal/**`
+routes trust the composite gateway to enforce JWT scopes. The
+moderation database uses transactions for visibility changes and audit
+events. There is no automated moderation classifier, suspension,
+appeal mechanism, reporter abuse scoring, impersonation-resistant real
+purchase attestation, or immutable external audit sink.
+
+**Schema warning:** The review service adds MySQL report, action-history
+and visibility columns. The prototype still uses JPA auto-DDL. Plan
+explicit Flyway/Liquibase migrations, backfill visibility for historical
+reviews, and test with real data before deploying to an existing
+database. Full integration and security checks are required before
+merging this draft.
