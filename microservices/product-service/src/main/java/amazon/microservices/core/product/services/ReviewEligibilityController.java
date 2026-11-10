@@ -18,7 +18,11 @@ public class ReviewEligibilityController {
     public Mono<Boolean> hasMockPurchase(@PathVariable String ownerKey, @PathVariable int productId) {
         if (ownerKey == null || !ownerKey.matches("[0-9a-f]{64}") || productId < 1)
             throw new InvalidInputException("Invalid review eligibility query");
-        return orders.existsByOwnerKeyAndProductIdAndStatus(
-                ownerKey, productId, OrderEntity.MOCK_PAID);
+        return Mono.zip(
+                orders.existsByOwnerKeyAndProductIdAndStatus(
+                        ownerKey, productId, OrderEntity.MOCK_PAID),
+                orders.existsByOwnerKeyAndItemsProductIdAndStatus(
+                        ownerKey, productId, OrderEntity.MOCK_PAID))
+                .map(result -> result.getT1() || result.getT2());
     }
 }
