@@ -64,6 +64,18 @@ class OAuth2AuthorizationServerApplicationTests {
 	}
 
 	@Test
+	void dedicatedMockFulfillmentClientUsesClientCredentials() throws Exception {
+		String credentials = Base64.getEncoder().encodeToString(
+			"mock-fulfillment:test-fulfillment-client-secret".getBytes());
+		this.mvc.perform(post("/oauth2/token")
+				.param("grant_type", "client_credentials")
+				.param("scope", "fulfillment:read fulfillment:write")
+				.header("Authorization", "Basic " + credentials))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.access_token").exists());
+	}
+
+	@Test
 	void requestOpenidConfiguration() throws Exception {
 
 		this.mvc.perform(get("/.well-known/openid-configuration"))
