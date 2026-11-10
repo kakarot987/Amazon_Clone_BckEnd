@@ -3,6 +3,7 @@ package amazon.microservices.core.product;
 import amazon.api.core.product.Product;
 import amazon.api.event.Event;
 import amazon.microservices.core.product.persistence.ProductRepository;
+import amazon.microservices.core.product.persistence.ProcessedProductEventRepository;
 import amazon.microservices.core.product.persistence.CartRepository;
 import amazon.microservices.core.product.persistence.OrderRepository;
 import amazon.microservices.core.product.persistence.ShipmentRepository;
@@ -58,6 +59,9 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
   private ProductRepository repository;
 
   @Autowired
+  private ProcessedProductEventRepository processedProductEvents;
+
+  @Autowired
   private CartRepository cartRepository;
 
   @Autowired
@@ -82,6 +86,7 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
   @BeforeEach
   void setupDb() {
     repository.deleteAll().block();
+    processedProductEvents.deleteAll().block();
     cartRepository.deleteAll().block();
     orderRepository.deleteAll().block();
     shipmentRepository.deleteAll().block();
@@ -1406,6 +1411,35 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
       .exchange().expectStatus().isOk().expectBody()
       .jsonPath("$.discrepancies[0].kind").isEqualTo("TERMINAL_ORDER_HOLD");
     assertEquals(4, repository.findByProductId(871).block().getStockQuantity());
+  }
+
+
+  @Test
+  void productEventReplayDoesNotDuplicateAndConflictingPayloadIsRejected() {
+    Product product = new Product(951, "Inbox product", 2, null);
+    Event<Integer, Product> original = new Event<>(CREATE, 951, product, "product-replay-951");
+    messageProcessor.accept(original);
+    messageProcessor.accept(new Event<>(CREATE, 951, product, "product-replay-951"));
+    assertEquals(1L, (long) repository.count().block());
+    assertEquals(1L, (long) processedProductEvents.count().block());
+
+    Product altered = new Product(951, "Tampered payload", 2, null);
+    assertThrows(amazon.util.exceptions.EventProcessingException.class,
+        () -> messageProcessor.accept(new Event<>(CREATE, 951, altered, "product-replay-951")));
+    assertEquals("Inbox product", repository.findByProductId(951).block().getName());
+  }
+
+  @Test
+  void failedProductEventRollsBackInboxReceiptAndMayBeRetried() {
+    Product existing = new Product(952, "Already present", 1, null);
+    messageProcessor.accept(new Event<>(CREATE, 952, existing, "product-created-952"));
+    long before = processedProductEvents.count().block();
+
+    // A separate event ID cannot create the same unique product again.
+    assertThrows(InvalidInputException.class, () -> messageProcessor.accept(
+        new Event<>(CREATE, 952, existing, "product-invalid-952")));
+    assertEquals(before, (long) processedProductEvents.count().block());
+    assertEquals(1L, (long) repository.count().block());
   }
 
   private void sendCreateProductEvent(int productId) {

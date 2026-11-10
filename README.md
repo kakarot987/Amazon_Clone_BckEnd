@@ -999,3 +999,71 @@ an operational starting point, not a full SRE program. CI validates
 application code and unit tests; a Docker Compose smoke test and actual
 k6 performance numbers must be run in the target environment before
 claiming monitoring or performance SLAs.
+
+## Durable consumer inboxes, replay safety and dead-letter operations (draft)
+
+The asynchronous product, recommendation and legacy review consumers now
+recognize a stable `eventId` and store a **processed-event receipt**
+alongside each successful business mutation. Every newly constructed
+event receives a UUID. An incoming event's fingerprint is calculated
+from its type, key and business payload, excluding its creation time.
+
+When a broker redelivers a **previously committed** event ID with an
+identical fingerprint, the handler returns successfully without repeating
+the create/update/delete. Reusing that ID for a different payload is
+rejected rather than silently ignored. The receipt and business mutation
+are committed atomically in their respective databases:
+
+- Product: MongoDB replica-set transaction and
+  `processed_product_events` collection.
+- Recommendation: MongoDB replica-set transaction and
+  `processed_recommendation_events` collection.
+- Legacy review: MySQL JPA transaction and
+  `processed_review_events` table.
+
+The review inbox concerns **legacy event-created reviews** only; the
+newer customer-owned review and moderation endpoints use their own
+independent persistence and authentication paths.
+
+The existing Config Server repository currently configures bounded
+message-consumer retries (three attempts) and RabbitMQ
+`autoBindDlq`/`republishToDlq` for each service. Kafka has an
+`enableDlq` configuration. Confirm the actual active binder and broker
+DLQ settings in your environment before relying on dead-letter
+delivery. This phase deliberately propagates handler failures so that
+the binder can retry or dead-letter them; it never acknowledges a
+failed transaction as processed. Operators can inspect RabbitMQ
+dead-letter queues in the private RabbitMQ management interface.
+
+### Compatibility and safeguards
+
+Historical events without an `eventId` still follow the previous
+behavior, **without replay guarantees**. Treat event-ID rollout as a
+migration; retain the processed-event collections/table for at least
+the entire retry and replay horizon, and add controlled retention once
+the system has a documented replay policy. Never reset an inbox while
+unacknowledged messages may be redelivered.
+
+The recommendation service now requires MongoDB replica-set support,
+matching the product service, because its event inbox and business
+mutation are transactional. Default Docker Compose supplies
+`mongodb://mongodb:27017/recommendation-db?replicaSet=rs0`,
+and its Testcontainers fixture uses a replica-set URI. Alternative
+Kafka/partitioned Compose configurations need corresponding updates
+before being used with transactional event consumers.
+
+**This is consumer idempotency, not a publisher transactional outbox.**
+Spring Cloud Stream's successful `StreamBridge.send()` call does not
+guarantee durable broker confirmation or atomic publication across
+product/review/recommendation destinations. A composite update may
+still partially publish. A durable publisher outbox, consistent
+aggregate-level saga/reconciliation, DLQ replay administration and
+alerting remain future phases.
+
+### Verification
+
+The new tests cover repeated event IDs, changed-payload conflicts,
+failed-write rollback of receipts, and stable JSON event identity.
+Run `gradle clean build` including Testcontainers, inspect the actual
+broker retry/DLQ configuration, and exercise a broker disconnect and
+redelivery in an isolated development stack before merging this draft.

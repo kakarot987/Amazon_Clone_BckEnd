@@ -3,6 +3,7 @@ package amazon.microservices.core.recommendation;
 import amazon.api.core.recommendation.Recommendation;
 import amazon.api.event.Event;
 import amazon.microservices.core.recommendation.persistence.RecommendationRepository;
+import amazon.microservices.core.recommendation.persistence.ProcessedRecommendationEventRepository;
 import amazon.util.exceptions.InvalidInputException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,12 +35,16 @@ class RecommendationServiceApplicationTests extends MongoDbTestBase {
   private RecommendationRepository repository;
 
   @Autowired
+  private ProcessedRecommendationEventRepository processedEvents;
+
+  @Autowired
   @Qualifier("messageProcessor")
   private Consumer<Event<Integer, Recommendation>> messageProcessor;
 
   @BeforeEach
   void setupDb() {
     repository.deleteAll().block();
+    processedEvents.deleteAll().block();
   }
 
   @Test
@@ -138,6 +143,34 @@ class RecommendationServiceApplicationTests extends MongoDbTestBase {
       .expectStatus().isEqualTo(expectedStatus)
       .expectHeader().contentType(APPLICATION_JSON)
       .expectBody();
+  }
+
+
+  @Test
+  void recommendationEventReplayIsIdempotentAndPayloadChangesAreRejected() {
+    Recommendation item = new Recommendation(991, 1, "Author 1", 5, "Original", "SA");
+    Event<Integer, Recommendation> event =
+        new Event<>(CREATE, 991, item, "recommendation-replay-991");
+    messageProcessor.accept(event);
+    messageProcessor.accept(new Event<>(CREATE, 991, item, "recommendation-replay-991"));
+    assertEquals(1L, (long) repository.count().block());
+    assertEquals(1L, (long) processedEvents.count().block());
+
+    Recommendation changed = new Recommendation(991, 1, "Author 1", 1, "Modified", "SA");
+    assertThrows(amazon.util.exceptions.EventProcessingException.class, () -> messageProcessor.accept(
+        new Event<>(CREATE, 991, changed, "recommendation-replay-991")));
+    assertEquals(1L, (long) repository.count().block());
+  }
+
+  @Test
+  void failedRecommendationWriteLeavesNoProcessedEvent() {
+    Recommendation first = new Recommendation(992, 1, "A", 5, "First", "SA");
+    messageProcessor.accept(new Event<>(CREATE, 992, first, "recommendation-first-992"));
+    long before = processedEvents.count().block();
+    assertThrows(InvalidInputException.class, () -> messageProcessor.accept(
+        new Event<>(CREATE, 992, first, "recommendation-other-992")));
+    assertEquals(before, (long) processedEvents.count().block());
+    assertEquals(1L, (long) repository.count().block());
   }
 
   private void sendCreateRecommendationEvent(int productId, int recommendationId) {

@@ -36,6 +36,7 @@ public class IsSameEvent extends TypeSafeMatcher<String> {
         LOG.trace("Convert the following json string to a map: {}", eventAsJson);
         Map mapEvent = convertJsonStringToMap(eventAsJson);
         mapEvent.remove("eventCreatedAt");
+        mapEvent.remove("eventId");
 
         Map mapExpectedEvent = getMapWithoutCreatedAt(expectedEvent);
 
@@ -57,6 +58,7 @@ public class IsSameEvent extends TypeSafeMatcher<String> {
    	private Map getMapWithoutCreatedAt(Event event) {
         Map mapEvent = convertObjectToMap(event);
         mapEvent.remove("eventCreatedAt");
+        mapEvent.remove("eventId");
         return mapEvent;
     }
 
