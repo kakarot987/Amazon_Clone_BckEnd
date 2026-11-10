@@ -100,24 +100,25 @@ public class InventoryReconciliationController {
         return Flux.fromIterable(tokens)
                 .concatMap(token -> {
                     if (token == null || !token.matches("[0-9a-f]{64}"))
-                        return Mono.just(new InventoryDiscrepancy(id, token,
-                                "INVALID_HOLD_TOKEN", "Malformed reservation identifier"));
+                        return Mono.just(java.util.Optional.of(new InventoryDiscrepancy(id, token,
+                                "INVALID_HOLD_TOKEN", "Malformed reservation identifier")));
                     return orders.findById(token)
                             .map(order -> {
                                 if (!HOLD_STATES.contains(order.getStatus()))
-                                    return new InventoryDiscrepancy(id, token,
+                                    return java.util.Optional.of(new InventoryDiscrepancy(id, token,
                                             "TERMINAL_ORDER_HOLD",
-                                            "Product still holds an order outside active reservation states");
+                                            "Product holds a token for a non-active order"));
                                 if (order.getItems().stream().noneMatch(line -> line.productId() == id))
-                                    return new InventoryDiscrepancy(id, token,
+                                    return java.util.Optional.of(new InventoryDiscrepancy(id, token,
                                             "UNRELATED_ORDER_HOLD",
-                                            "Held order manifest does not contain this product");
-                                return (InventoryDiscrepancy) null;
+                                            "Held order manifest does not contain this product"));
+                                return java.util.Optional.<InventoryDiscrepancy>empty();
                             })
-                            .switchIfEmpty(Mono.just(new InventoryDiscrepancy(
+                            .defaultIfEmpty(java.util.Optional.of(new InventoryDiscrepancy(
                                     id, token, "ORPHAN_HOLD", "No order exists for held token")));
                 })
-                .filter(java.util.Objects::nonNull)
+                .filter(java.util.Optional::isPresent)
+                .map(java.util.Optional::get)
                 .collectList()
                 .map(found -> {
                     local.addAll(found);
@@ -131,15 +132,16 @@ public class InventoryReconciliationController {
                         .map(product -> {
                             List<String> holds = product.getReservedOrderIds();
                             if (holds == null || !holds.contains(order.getId()))
-                                return new InventoryDiscrepancy(line.productId(), order.getId(),
-                                        "MISSING_HOLD",
-                                        "Reserved/payment-pending order has no product reservation token");
-                            return (InventoryDiscrepancy) null;
+                                return java.util.Optional.of(new InventoryDiscrepancy(
+                                        line.productId(), order.getId(), "MISSING_HOLD",
+                                        "Active order missing product hold token"));
+                            return java.util.Optional.<InventoryDiscrepancy>empty();
                         })
-                        .switchIfEmpty(Mono.just(new InventoryDiscrepancy(
-                                line.productId(), order.getId(),
-                                "MISSING_PRODUCT", "Active order product no longer exists"))))
-                .filter(java.util.Objects::nonNull)
+                        .defaultIfEmpty(java.util.Optional.of(new InventoryDiscrepancy(
+                                line.productId(), order.getId(), "MISSING_PRODUCT",
+                                "Active order product no longer exists"))))
+                .filter(java.util.Optional::isPresent)
+                .map(java.util.Optional::get)
                 .collectList();
     }
 }
