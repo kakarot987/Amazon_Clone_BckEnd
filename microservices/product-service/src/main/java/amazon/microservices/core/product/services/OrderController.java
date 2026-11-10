@@ -52,16 +52,19 @@ public class OrderController {
     private final ReactiveMongoTemplate mongo;
     private final Duration reservationTtl;
     private final TransactionalOperator inventoryTransactions;
+    private final CommerceObservability observability;
 
     public OrderController(OrderRepository orders, CartRepository carts,
                            ProductRepository products, ReactiveMongoTemplate mongo,
                            TransactionalOperator inventoryTransactions,
+                           CommerceObservability observability,
                            @Value("${app.orders.reservation-ttl:PT15M}") Duration reservationTtl) {
         this.orders = orders;
         this.carts = carts;
         this.products = products;
         this.mongo = mongo;
         this.inventoryTransactions = inventoryTransactions;
+        this.observability = observability;
         if (reservationTtl.isZero() || reservationTtl.isNegative())
             throw new IllegalArgumentException("Reservation TTL must be positive");
         this.reservationTtl = reservationTtl;
@@ -74,8 +77,8 @@ public class OrderController {
         if (idempotencyKey == null || !idempotencyKey.matches("[A-Za-z0-9._-]{8,100}"))
             throw new InvalidInputException("Idempotency-Key must contain 8-100 safe characters");
         String id = digest(ownerKey + "\u0000" + idempotencyKey);
-        return orders.findById(id).flatMap(this::resume)
-                .switchIfEmpty(Mono.defer(() -> createFromCart(ownerKey, id)));
+        return observability.measure("checkout", orders.findById(id).flatMap(this::resume)
+                .switchIfEmpty(Mono.defer(() -> createFromCart(ownerKey, id))));
     }
 
     @GetMapping("/{ownerKey}/{orderId}")
@@ -89,7 +92,7 @@ public class OrderController {
     public Mono<OrderReceipt> cancel(@PathVariable String ownerKey, @PathVariable String orderId) {
         validateOwner(ownerKey);
         validateOrderId(orderId);
-        return ownedOrder(ownerKey, orderId).flatMap(order -> {
+        return observability.measure("cancel", ownedOrder(ownerKey, orderId).flatMap(order -> {
             if (OrderEntity.CANCELLED.equals(order.getStatus())
                     || OrderEntity.EXPIRED.equals(order.getStatus()))
                 return Mono.just(receipt(order));
@@ -105,7 +108,7 @@ public class OrderController {
                     .onErrorResume(OptimisticLockingFailureException.class,
                             ignored -> ownedOrder(ownerKey, orderId))
                     .flatMap(this::finishCancellation);
-        });
+        }));
     }
 
     private Mono<OrderEntity> ownedOrder(String ownerKey, String orderId) {
@@ -303,7 +306,8 @@ public class OrderController {
                                                 @PathVariable String orderId) {
         validateOwner(ownerKey);
         validateOrderId(orderId);
-        return ownedOrder(ownerKey, orderId).flatMap(this::startPayment);
+        return observability.measure("mock_payment_intent",
+                ownedOrder(ownerKey, orderId).flatMap(this::startPayment));
     }
 
     private Mono<PaymentIntent> startPayment(OrderEntity order) {
@@ -512,7 +516,7 @@ public class OrderController {
      * acting on stale status snapshots from a background scan.
      */
     Mono<OrderReceipt> reconcileOrder(String id, Instant now) {
-        return orders.findById(id).flatMap(order -> {
+        return observability.measure("reconcile", orders.findById(id).flatMap(order -> {
             if (OrderEntity.PENDING.equals(order.getStatus())
                     || (OrderEntity.RESERVING.equals(order.getStatus())
                         && (order.getReservationLeaseUntil() == null
@@ -529,7 +533,7 @@ public class OrderController {
                     && order.getExpiresAt() != null && !order.getExpiresAt().isAfter(now))
                 return expireReservation(order);
             return Mono.just(receipt(order));
-        });
+        }));
     }
 
     private Mono<OrderReceipt> expireReservation(OrderEntity order) {
