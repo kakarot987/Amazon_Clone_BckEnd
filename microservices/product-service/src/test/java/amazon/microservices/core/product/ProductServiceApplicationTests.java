@@ -9,6 +9,7 @@ import amazon.microservices.core.product.persistence.ShipmentRepository;
 import amazon.microservices.core.product.persistence.ReturnRepository;
 import amazon.microservices.core.product.persistence.WishlistRepository;
 import amazon.microservices.core.product.persistence.ShipmentEntity;
+import amazon.microservices.core.product.persistence.ReturnEntity;
 import amazon.api.commerce.ShipmentEvent;
 import amazon.api.commerce.ReturnRequest;
 import amazon.api.commerce.ReturnAction;
@@ -1029,6 +1030,100 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
       .exchange().expectStatus().isOk().expectBody(Boolean.class).isEqualTo(false);
     client.get().uri("/internal/review-eligibility/" + CART_OWNER + "/product/602")
       .exchange().expectStatus().isOk().expectBody(Boolean.class).isEqualTo(false);
+  }
+
+
+  @Test
+  void orderHistoryUsesOwnerScopeAndStableNewestFirstPagination() {
+    Instant origin = Instant.parse("2026-11-01T00:00:00Z");
+    for (int i = 0; i < 4; i++) {
+      String id = String.format("%064x", 801 + i);
+      String owner = i == 3 ? OTHER_OWNER : CART_OWNER;
+      OrderEntity order = new OrderEntity(id, owner, 801 + i, 1,
+          "History item " + i, new java.math.BigDecimal("15.00"), "USD");
+      order.setStatus(i == 1 ? OrderEntity.CANCELLED : OrderEntity.MOCK_PAID);
+      order.setCreatedAt(origin.plusSeconds(i * 60L));
+      orderRepository.save(order).block();
+    }
+    String url = "/internal/order-history/" + CART_OWNER;
+    client.get().uri(url + "?page=0&size=2").exchange().expectStatus().isOk()
+      .expectBody()
+      .jsonPath("$.totalElements").isEqualTo(3)
+      .jsonPath("$.totalPages").isEqualTo(2)
+      .jsonPath("$.orders.length()").isEqualTo(2)
+      .jsonPath("$.orders[0].order.productId").isEqualTo(803)
+      .jsonPath("$.orders[1].order.productId").isEqualTo(802);
+    client.get().uri(url + "?page=1&size=2").exchange().expectStatus().isOk()
+      .expectBody()
+      .jsonPath("$.orders.length()").isEqualTo(1)
+      .jsonPath("$.orders[0].order.productId").isEqualTo(801);
+    client.get().uri(url + "?page=0&size=10&status=MOCK_PAID")
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.totalElements").isEqualTo(2);
+    client.get().uri("/internal/order-history/" + OTHER_OWNER)
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.totalElements").isEqualTo(1)
+      .jsonPath("$.orders[0].order.productId").isEqualTo(804);
+  }
+
+  @Test
+  void orderHistoryIncludesShipmentAndReturnAndObservedTimelineOnly() {
+    String id = String.format("%064x", 811);
+    Instant created = Instant.parse("2026-10-01T10:00:00Z");
+    OrderEntity order = new OrderEntity(id, CART_OWNER, 811, 2,
+        "Combined order", new java.math.BigDecimal("25.00"), "USD");
+    order.setStatus(OrderEntity.MOCK_PAID);
+    order.setCreatedAt(created);
+    order.setPaymentStartedAt(created.plusSeconds(60));
+    order.setMockPaidAt(created.plusSeconds(120));
+    orderRepository.save(order).block();
+
+    ShipmentEntity shipment = new ShipmentEntity(id, "TEST_ZONE", "MOCK-811");
+    shipment.setStatus("DELIVERED");
+    java.util.List<ShipmentEvent> shipmentHistory = new java.util.ArrayList<>(shipment.getHistory());
+    shipmentHistory.add(new ShipmentEvent("event-delivered-811", "DELIVERED", created.plusSeconds(240)));
+    shipment.setHistory(shipmentHistory);
+    shipmentRepository.save(shipment).block();
+
+    ReturnEntity returned = new ReturnEntity(id, CART_OWNER, "DAMAGED",
+        new java.math.BigDecimal("50.00"), "USD");
+    returnRepository.save(returned).block();
+
+    String url = "/internal/order-history/" + CART_OWNER;
+    client.get().uri(url + "?size=5").exchange().expectStatus().isOk()
+      .expectBody()
+      .jsonPath("$.orders[0].order.total").isEqualTo(50.0)
+      .jsonPath("$.orders[0].shipment.status").isEqualTo("DELIVERED")
+      .jsonPath("$.orders[0].shipment.trackingNumber").isEqualTo("MOCK-811")
+      .jsonPath("$.orders[0].returnSummary.state").isEqualTo("REQUESTED");
+
+    client.get().uri(url + "/orders/" + id + "/timeline")
+      .exchange().expectStatus().isOk().expectBody()
+      .jsonPath("$.order.orderId").isEqualTo(id)
+      .jsonPath("$.events.length()").isEqualTo(6)
+      .jsonPath("$.events[0].source").isEqualTo("ORDER")
+      .jsonPath("$.events[0].status").isEqualTo("CREATED")
+      .jsonPath("$.events[1].status").isEqualTo("MOCK_PAYMENT_STARTED")
+      .jsonPath("$.events[2].status").isEqualTo("MOCK_PAID");
+
+    client.get().uri("/internal/order-history/" + OTHER_OWNER + "/orders/" + id + "/timeline")
+      .exchange().expectStatus().isEqualTo(NOT_FOUND);
+  }
+
+  @Test
+  void orderHistoryRejectsInvalidPagingAndStatusAndReturnsEmptyResults() {
+    String url = "/internal/order-history/" + CART_OWNER;
+    client.get().uri(url).exchange().expectStatus().isOk()
+      .expectBody().jsonPath("$.totalElements").isEqualTo(0)
+      .jsonPath("$.orders.length()").isEqualTo(0);
+    for (String query : new String[] {"?page=-1", "?size=0", "?size=51",
+                                      "?page=2147483647&size=50",
+                                      "?status=INVALID_STATE"}) {
+      client.get().uri(url + query).exchange()
+        .expectStatus().isEqualTo(UNPROCESSABLE_ENTITY);
+    }
+    client.get().uri(url + "/orders/" + String.format("%064x", 999) + "/timeline")
+      .exchange().expectStatus().isEqualTo(NOT_FOUND);
   }
 
   private void sendCreateProductEvent(int productId) {
