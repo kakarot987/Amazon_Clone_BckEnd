@@ -1,0 +1,324 @@
+{
+  "info": {
+    "_postman_id": "f52a1d57-090b-40ec-a9e1-acd912122026",
+    "name": "Amazon Clone Backend | local portfolio demo",
+    "description": "Run against disposable local default Compose. Set accessToken to a signed-in demo-user JWT; never export secrets. Create returns 202 for durable outbox intent. Rerun Read aggregate until downstream consumers catch up. See docs/DEMO.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8443"
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "operatorToken",
+      "value": ""
+    },
+    {
+      "key": "productId",
+      "value": ""
+    },
+    {
+      "key": "orderId",
+      "value": ""
+    },
+    {
+      "key": "idempotencyKey",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "01 | Gateway health",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/actuator/health",
+        "auth": {
+          "type": "noauth"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Gateway health is available\", function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 | Anonymous catalog is denied",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/product-composite/1",
+        "auth": {
+          "type": "noauth"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Anonymous access is rejected\", function () { pm.expect([401, 403]).to.include(pm.response.code); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 | Create aggregate (202 durable intent)",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/product-composite",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"productId\": {{productId}},\n  \"name\": \"Portfolio Demo Mechanical Keyboard\",\n  \"weight\": 750,\n  \"sku\": \"PORTFOLIO-KEYBOARD-{{productId}}\",\n  \"description\": \"Disposable local demo product for testing composite event fan-out.\",\n  \"category\": \"electronics\",\n  \"price\": 1499,\n  \"currency\": \"INR\",\n  \"stockQuantity\": 12,\n  \"imageUrls\": [],\n  \"recommendations\": [\n    {\n      \"recommendationId\": 1,\n      \"author\": \"Demo Author\",\n      \"rate\": 5,\n      \"content\": \"Pairs well with a local portfolio setup.\"\n    }\n  ],\n  \"reviews\": [\n    {\n      \"reviewId\": 1,\n      \"author\": \"Demo Reviewer\",\n      \"subject\": \"Demo review\",\n      \"content\": \"Synthetic review, not a real customer endorsement.\"\n    }\n  ]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Synthetic product + recommendation + review. Clear collection variable productId between independent demo runs. No immediate read-after-write guarantee."
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get(\"productId\")) { pm.collectionVariables.set(\"productId\", String(100000 + Math.floor(Math.random() * 1900000000))); }"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Composite creation enqueued with HTTP 202\", function () { pm.response.to.have.status(202); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 | Read aggregate (rerun until 200)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/product-composite/{{productId}}",
+        "description": "RabbitMQ/consumers may lag; rerun manually rather than asserting immediate consistency."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Eventual product read (rerun after 202 if not ready)\", function () { pm.response.to.have.status(200); });",
+              "if (pm.response.code === 200) { const p = pm.response.json(); pm.test(\"Correct product ID\", () => pm.expect(p.productId).to.eql(Number(pm.collectionVariables.get(\"productId\")))); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 | Search catalog",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/product-composite?query=Portfolio%20Demo&page=0&size=20"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Catalog query responds\", function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 | Inventory stock",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/product-composite/inventory/{{productId}}",
+        "description": "Requires inventory:read. Available count is not a paid order or a global inventory ledger."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Inventory responds\", function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 | Set signed-in user's cart item",
+      "request": {
+        "method": "PUT",
+        "url": "{{baseUrl}}/product-composite/cart/items/{{productId}}",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"quantity\": 1\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Requires cart:write and a signed-in user JWT, not client credentials."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Cart item updated\", function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 | View cart",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/product-composite/cart",
+        "description": "Requires cart:read and signed-in user token."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Personal cart responds\", function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 | Checkout (mock reservations; no charge)",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/product-composite/orders",
+        "header": [
+          {
+            "key": "Idempotency-Key",
+            "value": "{{idempotencyKey}}"
+          }
+        ],
+        "description": "Requires order:write, signed-in user, and cart with stock; same Idempotency-Key returns existing attempt. Payment/shipping are simulated."
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get(\"idempotencyKey\")) { pm.collectionVariables.set(\"idempotencyKey\", \"portfolio-\" + Date.now()); }"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Order receipt returned\", function () { pm.response.to.have.status(200); });",
+              "if (pm.response.code === 200) { const order = pm.response.json(); if (order.orderId) pm.collectionVariables.set(\"orderId\", order.orderId); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 | Get order receipt",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/product-composite/orders/{{orderId}}",
+        "description": "Requires order:read. orderId populated by successful checkout request."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Order can be read\", function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "11 | Operator read-only inventory audit",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/product-composite/fulfillment/inventory/reconciliation",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{operatorToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "description": "Optional: requires independent fulfillment:read operator token. Report is bounded and never repairs stock."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Operator audit responds\", function () { pm.response.to.have.status(200); });"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

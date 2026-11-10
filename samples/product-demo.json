@@ -1,0 +1,28 @@
+{
+  "productId": 900001,
+  "name": "Portfolio Demo Mechanical Keyboard",
+  "weight": 750,
+  "sku": "PORTFOLIO-KEYBOARD-900001",
+  "description": "Disposable local demo product for testing composite event fan-out.",
+  "category": "electronics",
+  "price": 1499,
+  "currency": "INR",
+  "stockQuantity": 12,
+  "imageUrls": [],
+  "recommendations": [
+    {
+      "recommendationId": 1,
+      "author": "Demo Author",
+      "rate": 5,
+      "content": "Pairs well with a local portfolio setup."
+    }
+  ],
+  "reviews": [
+    {
+      "reviewId": 1,
+      "author": "Demo Reviewer",
+      "subject": "Demo review",
+      "content": "Synthetic review, not a real customer endorsement."
+    }
+  ]
+}

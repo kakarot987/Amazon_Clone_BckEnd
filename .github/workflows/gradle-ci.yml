@@ -23,6 +23,11 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.6'
+      - name: Validate portfolio demo assets
+        run: |
+          python3 -m json.tool postman/Amazon-Clone-Backend.postman_collection.json >/dev/null
+          python3 -m json.tool samples/product-demo.json >/dev/null
+          bash -n scripts/demo-catalog.sh
       - name: Run Gradle checks (including Testcontainers)
         run: gradle clean build --stacktrace
       - name: Upload test failure reports
