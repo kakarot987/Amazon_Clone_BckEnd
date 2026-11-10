@@ -427,3 +427,90 @@ secured by the mock OAuth client and gateway scopes, not by an enterprise
 staff/warehouse identity service. Real commerce must use a dedicated
 fulfillment system, audited access controls, returns/refunds and tested
 delivery reconciliation. Run the Java 17 CI suite before merging.
+
+## Returns, simulated refunds and post-delivery management (draft)
+
+This phase builds on the simulated shipping workflow from PR #9. It supports
+**one return per delivered single-product order**, with a separate operator
+identity and full event history. **No real funds move**, no product is
+automatically restocked, and `MOCK_REFUNDED` has no financial meaning.
+
+### Eligibility and customer requests
+
+Only the signed-in order owner can request a return. The order must be
+`MOCK_PAID` and its mock shipment must have reached `DELIVERED`.
+Requests are accepted for 30 days after the recorded delivery by default,
+configured by `app.returns.window: P30D` in the product service. The
+reason must be one of `DAMAGED`, `WRONG_ITEM`, `NOT_AS_DESCRIBED`,
+or `NO_LONGER_NEEDED`. Free-text addresses and personal details are
+intentionally not accepted.
+
+```http
+POST /product-composite/orders/{orderId}/return
+Authorization: Bearer <signed-in-user-return-write-token>
+Content-Type: application/json
+
+{"reasonCode":"DAMAGED"}
+
+GET /product-composite/orders/{orderId}/return
+Authorization: Bearer <signed-in-user-return-read-token>
+```
+
+Repeated requests for the same order/reason return the existing record.
+Changing the reason after creation is rejected. A different customer cannot
+read or create a return on that order.
+
+### Operator decisions and mock refund
+
+A separate development OAuth2 client `mock-returns` holds
+`returns:read` / `returns:manage`. Set a unique
+`AUTH_RETURNS_CLIENT_SECRET` in your ignored `.env` file. Ordinary
+customer and catalog writer credentials cannot approve or refund returns.
+
+```http
+GET  /product-composite/returns/{orderId}
+POST /product-composite/returns/{orderId}/approve
+POST /product-composite/returns/{orderId}/reject
+POST /product-composite/returns/{orderId}/receive
+POST /product-composite/returns/{orderId}/mock-refund
+```
+
+Each operator action requires `Authorization: Bearer <returns-operator-token>`
+and a JSON body such as `{"eventId":"return-review-0001"}`. State
+transitions are:
+
+```text
+REQUESTED -> APPROVED -> RECEIVED -> MOCK_REFUNDED
+          -> REJECTED
+```
+
+Refund amount is taken from the original paid order's stored unit price
+and quantity (not cart display values). Repeating the same event ID and
+action does not duplicate a ledger entry; using the same ID for another
+transition is rejected. The complete timestamped history is persisted with
+the return record using optimistic locking and retries on conflicts.
+
+A standard-library simulator is provided:
+
+```sh
+export RETURNS_ACCESS_TOKEN='<scoped-mock-returns-operator-token>'
+python3 scripts/simulate-return.py --order-id '<order-id>' --action approve
+python3 scripts/simulate-return.py --order-id '<order-id>' --action receive
+python3 scripts/simulate-return.py --order-id '<order-id>' --action mock-refund
+```
+
+**Limitations:** The refund is a simulated state transition, not a payment
+processor refund. A real integration would need provider refund IDs,
+reconciliation, immutable audit records, monetary rounding/tax policy,
+returns shipping labels, warehouse inspection, inventory restocking policy,
+fraud checks, privacy protections and staff-level authorization. Returned
+items are **not** automatically added to available stock.
+
+### Merge verification
+
+This PR also brings the shipment files from merged PR #9 onto `main`:
+PR #9 had been merged into PR #8's branch *after* PR #8 was merged into
+`main`, so its shipping changes did not appear on `main`. The new
+branch is based directly on `main` and includes both the shipping code
+and this complete mock returns phase. Run `gradle clean build` and
+Docker end-to-end checks before merging.
