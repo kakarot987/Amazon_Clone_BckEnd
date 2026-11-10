@@ -35,3 +35,38 @@ groups:
           severity: critical
         annotations:
           summary: "Product service metrics target is unavailable"
+      - alert: CommerceOutboxUndeliveredBacklog
+        expr: commerce_reliability_outbox_undelivered > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Composite outbox has more than 100 undelivered events"
+      - alert: CommerceOutboxOldestEventStuck
+        expr: commerce_reliability_outbox_undelivered > 0 and commerce_reliability_outbox_oldest_age_seconds > 900
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Oldest composite outbox event is older than fifteen minutes"
+      - alert: CommerceSagaNeedsManualReview
+        expr: commerce_reliability_saga_needs_review > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "One or more supervised aggregate operations require operator review"
+      - alert: CommerceRecoveryTelemetryStale
+        expr: time() - commerce_reliability_telemetry_last_success_epoch_seconds > 180
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Composite recovery telemetry has not refreshed in three minutes"
+      - alert: CommerceCompositeMetricsMissing
+        expr: up{job="commerce-composite"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Composite service Prometheus scrape target unavailable"
