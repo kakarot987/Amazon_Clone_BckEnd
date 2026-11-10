@@ -1,0 +1,19 @@
+# Isolated test configuration: no remote Spring Cloud Config import.
+spring:
+  application:
+    name: auth-server-test
+  cloud:
+    config:
+      enabled: false
+    discovery:
+      enabled: false
+
+eureka:
+  client:
+    enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
