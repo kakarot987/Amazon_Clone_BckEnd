@@ -43,6 +43,8 @@ public class SecurityConfig {
                         .pathMatchers(GET, "/product-composite/orders/*/shipment").hasAuthority("SCOPE_order:read")
                         .pathMatchers(POST, "/product-composite/fulfillment/shipments").hasAuthority("SCOPE_fulfillment:write")
                         .pathMatchers(GET, "/product-composite/fulfillment/shipments/*").hasAuthority("SCOPE_fulfillment:read")
+                        .pathMatchers(GET, "/product-composite/fulfillment/aggregates/*/operations").hasAuthority("SCOPE_fulfillment:read")
+                        .pathMatchers(GET, "/product-composite/fulfillment/operations/*").hasAuthority("SCOPE_fulfillment:read")
                         .pathMatchers(GET, "/product-composite/fulfillment/aggregates/*/reconciliation").hasAuthority("SCOPE_fulfillment:read")
                         .pathMatchers(GET, "/product-composite/fulfillment/inventory/reconciliation").hasAuthority("SCOPE_fulfillment:read")
                         .pathMatchers(POST, "/product-composite/fulfillment/shipments/*/events").hasAuthority("SCOPE_fulfillment:write")

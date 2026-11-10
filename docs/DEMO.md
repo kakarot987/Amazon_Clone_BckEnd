@@ -79,3 +79,7 @@ Before publishing: remove sensitive values from terminal history and screenshots
 ## Optional aggregate reconciliation check
 
 With a separate operator token holding `fulfillment:read`, request `GET /product-composite/fulfillment/aggregates/{productId}/reconciliation` for the same demo product. During broker interruption the diagnostic may report `PUBLISH_PENDING`; after recovery rerun and inspect `OBSERVED`, `CONVERGING` or a failure state rather than assuming success. The check compares tracked IDs only and is **not** saga completion. See [status details](RECONCILIATION.md).
+
+## Optional operation journal demo
+
+With a `fulfillment:read` operator JWT, call `GET /product-composite/fulfillment/aggregates/{productId}/operations?limit=10` after creating the demo product. Select the latest operation ID and inspect `GET /product-composite/fulfillment/operations/{operationId}`. Show that the event IDs and publication states are durable; during broker failure the result may be `PUBLISH_PENDING` or `DISPATCHING`, and after recovery `BROKER_ACCEPTED`. The `consumerStatus` field stays `NOT_VERIFIED`. These are observed runtime outcomes, not guaranteed demo timestamps or proof of business convergence. See [operations guide](OPERATIONS.md).

@@ -39,6 +39,10 @@
     {
       "key": "idempotencyKey",
       "value": ""
+    },
+    {
+      "key": "operationId",
+      "value": ""
     }
   ],
   "item": [
@@ -345,6 +349,66 @@
             "exec": [
               "pm.test(\"Reconciliation request responds\", function () { pm.response.to.have.status(200); });",
               "if (pm.response.code === 200) { const body = pm.response.json(); pm.test(\"Recognized diagnostic status\", () => pm.expect([\"NOT_TRACKED\", \"INCOMPLETE_HISTORY\", \"INVALID_JOURNAL\", \"PUBLISH_PENDING\", \"CONVERGING\", \"INCONCLUSIVE\", \"DRIFT_CANDIDATE\", \"OBSERVED\"]).to.include(body.status)); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "13 | Operator list durable operations",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{operatorToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/product-composite/fulfillment/aggregates/{{productId}}/operations?limit=10",
+        "description": "Requires fulfillment:read; lists at most 10 operations touching this product, newest first. Never marks consumer success."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Operation history responds\", () => pm.response.to.have.status(200));",
+              "if (pm.response.code === 200) { const rows = pm.response.json(); pm.test(\"History is a list\", () => pm.expect(rows).to.be.an(\"array\")); if (rows.length) pm.collectionVariables.set(\"operationId\", rows[0].operationId); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "14 | Operator inspect one durable operation",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{operatorToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/product-composite/fulfillment/operations/{{operationId}}",
+        "description": "Requires fulfillment:read; requires operationId from list. BROKER_ACCEPTED never means consumer completion."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Operation inspection responds\", () => pm.response.to.have.status(200));",
+              "if (pm.response.code === 200) { const body = pm.response.json(); pm.test(\"Consumer state is not overclaimed\", () => pm.expect(body.consumerStatus).to.eql(\"NOT_VERIFIED\")); }"
             ]
           }
         }
