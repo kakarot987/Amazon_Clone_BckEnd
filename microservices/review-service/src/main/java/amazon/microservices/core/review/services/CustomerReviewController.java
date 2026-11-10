@@ -129,7 +129,7 @@ public class CustomerReviewController {
     }
 
     private CustomerReview publicReview(CustomerReviewEntity entity) {
-        return new CustomerReview(entity.getProductId(), entity.getRating(),
+        return new CustomerReview(entity.getId(), entity.getProductId(), entity.getRating(),
                 entity.getTitle(), entity.getContent(), entity.getCreatedAt(), entity.getUpdatedAt(),
                 entity.isMockPurchaseConfirmed());
     }
