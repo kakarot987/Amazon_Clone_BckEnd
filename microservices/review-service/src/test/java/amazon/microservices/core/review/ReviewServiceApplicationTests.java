@@ -335,7 +335,7 @@ class ReviewServiceApplicationTests extends MySqlTestBase {
     assertEquals(1L, processedEvents.count());
 
     Review altered = new Review(993, 1, "Sample", "Subject", "Altered", "SA");
-    assertThrows(IllegalArgumentException.class, () -> messageProcessor.accept(
+    assertThrows(amazon.util.exceptions.EventProcessingException.class, () -> messageProcessor.accept(
         new Event<>(CREATE, 993, altered, "review-replay-993")));
     assertEquals(1L, repository.count());
   }
