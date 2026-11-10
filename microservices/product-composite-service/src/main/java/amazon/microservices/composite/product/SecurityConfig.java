@@ -48,6 +48,8 @@ public class SecurityConfig {
                             .hasAuthority("SCOPE_order:write")
 						.pathMatchers(POST, "/product-composite/orders").hasAuthority("SCOPE_order:write")
                         .pathMatchers(POST, "/product-composite/orders/*/cancel").hasAuthority("SCOPE_order:write")
+                        .pathMatchers(GET, "/product-composite/orders/history").hasAuthority("SCOPE_order:read")
+                        .pathMatchers(GET, "/product-composite/orders/*/timeline").hasAuthority("SCOPE_order:read")
                         .pathMatchers(GET, "/product-composite/orders/*").hasAuthority("SCOPE_order:read")
                         .pathMatchers(GET, "/product-composite/cart").hasAuthority("SCOPE_cart:read")
                         .pathMatchers(PUT, "/product-composite/cart/items/**").hasAuthority("SCOPE_cart:write")
