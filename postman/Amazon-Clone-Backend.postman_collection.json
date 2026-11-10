@@ -43,6 +43,10 @@
     {
       "key": "operationId",
       "value": ""
+    },
+    {
+      "key": "triageIdempotencyKey",
+      "value": ""
     }
   ],
   "item": [
@@ -469,6 +473,112 @@
             "exec": [
               "pm.test(\"Supervision record responds\", () => pm.response.to.have.status(200));",
               "if (pm.response.code === 200) { const data = pm.response.json(); pm.test(\"Conservative supervision state\", () => pm.expect([\"PENDING\",\"CHECKING\",\"WAITING\",\"RECEIPTS_VERIFIED\",\"NEEDS_REVIEW\"]).to.include(data.state)); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "17 | Operator review queue",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{operatorToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/product-composite/fulfillment/supervisions/review-queue?limit=20",
+        "description": "fulfillment:read only. Bounded NEEDS_REVIEW cases; no repair."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Review queue responds\",()=>pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "18 | Operator append investigation note (only NEEDS_REVIEW)",
+      "request": {
+        "method": "POST",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{operatorToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/product-composite/fulfillment/operations/{{operationId}}/triage",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{triageIdempotencyKey}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"category\": \"INVESTIGATING\",\n  \"note\": \"Checking outbox state and transactional consumer receipt evidence.\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Requires fulfillment:write operator token and a supervised NEEDS_REVIEW operation. Set triageIdempotencyKey to a fresh 8+ character key; identical repeats return original note. Other state returns 409. No compensation or replay."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Note stored or request rejected for ineligible state\",()=>pm.expect([200,409]).to.include(pm.response.code));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "19 | Operator list investigation notes",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{operatorToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/product-composite/fulfillment/operations/{{operationId}}/triage?limit=20",
+        "description": "Requires fulfillment:read. Retrieves immutable investigation notes without changing saga state."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Triage notes respond\",()=>pm.response.to.have.status(200));"
             ]
           }
         }
