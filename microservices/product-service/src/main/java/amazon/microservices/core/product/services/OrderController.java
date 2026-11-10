@@ -2,6 +2,7 @@ package amazon.microservices.core.product.services;
 
 import amazon.api.commerce.CartItem;
 import amazon.api.commerce.OrderReceipt;
+import amazon.api.commerce.OrderLine;
 import amazon.api.commerce.PaymentIntent;
 import amazon.api.commerce.MockPaymentEvent;
 import amazon.microservices.core.product.persistence.CartRepository;
@@ -21,6 +22,7 @@ import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Flux;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -30,12 +32,15 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
- * Single-product checkout prototype. Stock and the reservation ID are updated
- * atomically on one product document. The order intent is persisted separately
- * and can be resumed with the same idempotency key after a process crash.
- * No payment or shipping is initiated.
+ * Multi-item checkout prototype. Each product reservation is an atomic Mongo
+ * document update, but the overall order is NOT a multi-document transaction.
+ * PENDING orders are retried; partial failed reservations are compensated.
+ * Payment and fulfillment remain simulated.
  */
 @RestController
 @RequestMapping("/internal/orders")
@@ -110,23 +115,54 @@ public class OrderController {
                 .switchIfEmpty(Mono.error(new InvalidInputException("Cart is empty")))
                 .flatMap(cart -> {
                     List<CartItem> items = cart.getItems();
-                    if (items == null || items.size() != 1)
+                    if (items == null || items.isEmpty() || items.size() > 20)
                         return Mono.error(new InvalidInputException(
-                                "This checkout version supports exactly one cart item"));
-                    CartItem item = items.get(0);
-                    if (item.getProductId() < 1 || item.getQuantity() < 1 || item.getQuantity() > 99)
-                        return Mono.error(new InvalidInputException("Invalid cart quantity"));
-                    return products.findByProductId(item.getProductId())
-                            .switchIfEmpty(Mono.error(new NotFoundException("Product not found")))
-                            .flatMap(product -> {
-                                BigDecimal price = product.getPrice();
-                                if (price == null || price.signum() < 0 || price.scale() > 2
-                                        || product.getCurrency() == null || product.getCurrency().isBlank())
+                                "Checkout supports 1-20 distinct products"));
+                    Set<Integer> seen = new HashSet<>();
+                    for (CartItem item : items) {
+                        if (item == null || item.getProductId() < 1
+                                || item.getQuantity() < 1 || item.getQuantity() > 99
+                                || !seen.add(item.getProductId()))
+                            return Mono.error(new InvalidInputException(
+                                    "Cart contains an invalid or duplicate product"));
+                    }
+                    // Persist all authoritative product snapshots BEFORE
+                    // deducting stock, so worker recovery has the full manifest.
+                    List<CartItem> sorted = items.stream()
+                            .sorted(Comparator.comparingInt(CartItem::getProductId))
+                            .toList();
+                    return Flux.fromIterable(sorted)
+                            .concatMap(item -> products.findByProductId(item.getProductId())
+                                    .switchIfEmpty(Mono.error(new NotFoundException(
+                                            "Product not found: " + item.getProductId())))
+                                    .map(product -> {
+                                        BigDecimal price = product.getPrice();
+                                        if (price == null || price.signum() < 0
+                                                || price.scale() > 2
+                                                || product.getCurrency() == null
+                                                || product.getCurrency().isBlank()
+                                                || product.getName() == null)
+                                            throw new InvalidInputException(
+                                                    "Product price, currency and name must be configured");
+                                        return new ProductSnapshot(
+                                                new OrderLine(product.getProductId(),
+                                                        item.getQuantity(), product.getName(), price),
+                                                product.getCurrency());
+                                    }))
+                            .collectList()
+                            .flatMap(snapshots -> {
+                                String currency = snapshots.get(0).currency();
+                                if (snapshots.stream().anyMatch(s -> !currency.equals(s.currency())))
                                     return Mono.error(new InvalidInputException(
-                                            "Product price and currency must be configured"));
-                                OrderEntity order = new OrderEntity(id, ownerKey, product.getProductId(),
-                                        item.getQuantity(), product.getName(), price, product.getCurrency(),
+                                            "All checkout items must use the same currency"));
+                                List<OrderLine> lines = snapshots.stream()
+                                        .map(ProductSnapshot::line).toList();
+                                OrderLine first = lines.get(0);
+                                OrderEntity order = new OrderEntity(id, ownerKey, first.productId(),
+                                        first.quantity(), first.productName(),
+                                        first.unitPrice(), currency,
                                         Instant.now().plus(reservationTtl));
+                                order.setItems(lines);
                                 return orders.save(order)
                                         .onErrorResume(DuplicateKeyException.class,
                                                 ignored -> orders.findById(id))
@@ -135,40 +171,77 @@ public class OrderController {
                 });
     }
 
+    private record ProductSnapshot(OrderLine line, String currency) {}
+
     private Mono<OrderReceipt> resume(OrderEntity order) {
-        if (!OrderEntity.PENDING.equals(order.getStatus())) return Mono.just(receipt(order));
-        return reserve(order).then(Mono.defer(() -> {
-            order.setStatus(OrderEntity.RESERVED);
-            return orders.save(order)
-                    .onErrorResume(OptimisticLockingFailureException.class,
-                            ignored -> orders.findById(order.getId()));
-        })).map(this::receipt);
+        if (!OrderEntity.PENDING.equals(order.getStatus()))
+            return Mono.just(receipt(order));
+        if (order.getExpiresAt() != null && !order.getExpiresAt().isAfter(Instant.now()))
+            return failPendingReservation(order, new InvalidInputException("Order reservation has expired"));
+        return reserve(order)
+                .then(Mono.defer(() -> orders.findById(order.getId())
+                        .flatMap(current -> {
+                            if (!OrderEntity.PENDING.equals(current.getStatus()))
+                                return Mono.just(current);
+                            current.setStatus(OrderEntity.RESERVED);
+                            return orders.save(current)
+                                    .onErrorResume(OptimisticLockingFailureException.class,
+                                            ex -> orders.findById(order.getId()));
+                        })))
+                .map(this::receipt)
+                .onErrorResume(error -> failPendingReservation(order, error));
+    }
+
+    /** Compensation reuses the existing idempotent reservation-token release path. */
+    private Mono<OrderReceipt> failPendingReservation(OrderEntity original, Throwable problem) {
+        return orders.findById(original.getId())
+                .flatMap(current -> {
+                    if (!OrderEntity.PENDING.equals(current.getStatus()))
+                        return Mono.just(receipt(current));
+                    current.setStatus(OrderEntity.CANCELLATION_PENDING);
+                    return orders.save(current)
+                            .onErrorResume(OptimisticLockingFailureException.class,
+                                    ex -> orders.findById(original.getId()))
+                            .flatMap(again -> {
+                                if (OrderEntity.CANCELLATION_PENDING.equals(again.getStatus()))
+                                    return finishCancellation(again);
+                                return Mono.just(receipt(again));
+                            });
+                })
+                // Preserve both the user-facing failure and any needed
+                // reconciliation state if cleanup has been interrupted.
+                .then(Mono.error(problem));
     }
 
     private Mono<Void> reserve(OrderEntity order) {
-        // The query and update run atomically on a single document. A retry
-        // finds the reservation ID and does not decrement the stock again.
-        Criteria criteria = Criteria.where("productId").is(order.getProductId())
-                .and("stockQuantity").gte(order.getQuantity())
-                .and("reservedOrderIds").ne(order.getId());
-        Update update = new Update().inc("stockQuantity", -order.getQuantity())
-                .addToSet("reservedOrderIds", order.getId());
+        // Each product write is atomic, and each reservation is keyed by
+        // the order ID. Replaying after a crash never deducts it twice.
+        return Flux.fromIterable(order.getItems())
+                .concatMap(line -> reserveLine(order.getId(), line))
+                .then();
+    }
+
+    private Mono<Void> reserveLine(String orderId, OrderLine line) {
+        Criteria criteria = Criteria.where("productId").is(line.productId())
+                .and("stockQuantity").gte(line.quantity())
+                .and("reservedOrderIds").ne(orderId);
+        Update update = new Update().inc("stockQuantity", -line.quantity())
+                .addToSet("reservedOrderIds", orderId);
         return mongo.findAndModify(Query.query(criteria), update,
                         FindAndModifyOptions.options().returnNew(true), ProductEntity.class)
                 .hasElement().flatMap(written -> {
                     if (written) return Mono.<Void>empty();
-                    return products.findByProductId(order.getProductId())
+                    return products.findByProductId(line.productId())
                             .switchIfEmpty(Mono.error(new NotFoundException("Product not found")))
                             .flatMap(product -> {
                                 if (product.getReservedOrderIds() != null
-                                        && product.getReservedOrderIds().contains(order.getId()))
+                                        && product.getReservedOrderIds().contains(orderId))
                                     return Mono.<Void>empty();
                                 return Mono.error(new InvalidInputException(
-                                        "Insufficient or untracked inventory"));
+                                        "Insufficient or untracked inventory for product " + line.productId()));
                             });
                 });
     }
-
 
     /** One mock-payment intent per reserved order, not a real payment charge. */
     @PostMapping("/{ownerKey}/{orderId}/payment")
