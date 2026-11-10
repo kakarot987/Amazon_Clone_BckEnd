@@ -157,7 +157,7 @@ class RecommendationServiceApplicationTests extends MongoDbTestBase {
     assertEquals(1L, (long) processedEvents.count().block());
 
     Recommendation changed = new Recommendation(991, 1, "Author 1", 1, "Modified", "SA");
-    assertThrows(IllegalArgumentException.class, () -> messageProcessor.accept(
+    assertThrows(amazon.util.exceptions.EventProcessingException.class, () -> messageProcessor.accept(
         new Event<>(CREATE, 991, changed, "recommendation-replay-991")));
     assertEquals(1L, (long) repository.count().block());
   }
