@@ -1,0 +1,37 @@
+groups:
+  - name: commerce-reliability
+    rules:
+      - alert: CommerceCheckoutErrorRatioHigh
+        expr: |
+          (
+            sum(rate(commerce_order_operations_total{operation="checkout",outcome="error"}[5m]))
+            /
+            clamp_min(sum(rate(commerce_order_operations_total{operation="checkout"}[5m])), 0.001)
+          ) > 0.05
+          and sum(increase(commerce_order_operations_total{operation="checkout"}[5m])) >= 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Checkout errors exceed 5% over five minutes"
+      - alert: CommerceRecoveryFailures
+        expr: increase(commerce_recovery_failures_total[10m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "One or more orders failed background reconciliation"
+      - alert: CommerceInventoryAuditFindings
+        expr: increase(commerce_inventory_audit_findings_total[30m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "An operator inventory audit detected discrepancies"
+      - alert: CommerceProductMetricsMissing
+        expr: up{job="commerce-product"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Product service metrics target is unavailable"

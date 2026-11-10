@@ -905,3 +905,97 @@ with durable inventory movements, audited repair approvals, and alerting.
 
 All payment, shipping and refund operations in this repository still use
 **mock states** and do not transfer real money or goods.
+
+## Observability and reproducible performance checks (draft)
+
+This phase adds **bounded Micrometer business metrics**, private
+Prometheus/Grafana monitoring, sampled Zipkin traces, operator alert
+rules and a read-only load-test script. All payments, deliveries and
+refunds remain simulated.
+
+### Local monitoring stack
+
+Set strong `GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD` values
+in your locally ignored `.env` file. The default Docker Compose stack
+starts Prometheus and Grafana alongside the existing Zipkin container.
+
+```sh
+docker compose config
+docker compose up --build -d
+docker compose ps
+```
+
+After a healthy startup, use these local-only addresses:
+
+- Grafana: `http://localhost:3000` — dashboard **Commerce Backend Reliability**
+- Prometheus: `http://localhost:9090`
+- Zipkin: `http://localhost:9411`
+
+Ports bind to **127.0.0.1**, not all network interfaces. Grafana
+requires the credentials in `.env`. Product and composite metric
+endpoints are scraped privately over the Docker `backend` network,
+not through the public Gateway. Do **not** publish service actuator
+ports or expose Prometheus/Grafana/Zipkin without proper ingress
+authentication, transport protection and network policy.
+
+### Metrics and alerts
+
+`commerce_order_operations_total` and
+`commerce_order_operation_duration_seconds` track checkout,
+cancellation, mock-payment intent and recovery outcomes with a fixed
+`operation` and `outcome` vocabulary (`success`, `error`,
+`cancelled`). No JWT, order ID, product ID, exception message,
+request parameter or user identity becomes a metrics label.
+
+`commerce_recovery_failures_total` tracks failed recovery attempts;
+`commerce_recovery_last_batch_size` shows the most recent worker scan.
+`commerce_inventory_audit_runs_total` and
+`commerce_inventory_audit_findings_total` count **observed operator
+audit findings**, tagged by discrepancy category. Repeating an audit
+can count the same finding again; this is not a gauge of unique
+unresolved inventory errors.
+
+See `monitoring/rules.yml` for Prometheus alert expressions. Alert
+conditions detect checkout error ratios (with a minimum request count),
+recovery failures, inventory discrepancies and missing product-service
+metrics. Alerts appear in the Prometheus UI; **they do not send email,
+SMS or PagerDuty notifications** until an Alertmanager or other
+notification receiver is separately configured.
+
+Micrometer tracing is sampled at 10% for product and composite
+containers and sent to local Zipkin using the configured collector URL.
+Sampling means that individual requests might not appear in Zipkin.
+Enable sampling and span attributes carefully in production; do not
+attach personal data or authentication tokens to traces.
+
+### Reproducible read-only load test
+
+Install k6 independently, start the stack and obtain a valid customer
+OAuth token with `product:read`. Use a seeded product ID only if you
+also want to measure a specific product read:
+
+```sh
+k6 run -e ACCESS_TOKEN="$ACCESS_TOKEN" \
+  -e BASE_URL=http://localhost:8443 \
+  -e VUS=5 -e DURATION=30s \
+  scripts/load-test.js
+```
+
+The test sends authenticated **GET-only** catalog requests. It does
+not create or mutate orders, reservations, payments, or inventory.
+The example targets a p95 under 1 second and an HTTP error rate
+under 5%, but **these are test thresholds, not measured claims**.
+Record actual p50/p95 latency, achieved requests per second, service
+CPU/memory, error rate and container sizes in a separate dated result
+if publishing portfolio benchmarks. Do not load-test public third-party
+systems or production without permission. Use the k6 run output and
+Grafana/Zipkin to explain bottlenecks and recovery behavior.
+
+### Limitations
+
+Prometheus, Grafana and Zipkin are local-development integrations.
+Metric cardinality is intentionally bounded, but the dashboard is
+an operational starting point, not a full SRE program. CI validates
+application code and unit tests; a Docker Compose smoke test and actual
+k6 performance numbers must be run in the target environment before
+claiming monitoring or performance SLAs.
