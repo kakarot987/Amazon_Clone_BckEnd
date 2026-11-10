@@ -82,3 +82,7 @@ Payment intents, signed **mock** webhooks, shipment state changes and refunds ar
 ## Bounded distributed reconciliation audit
 
 An operator with `fulfillment:read` can query `GET /product-composite/fulfillment/aggregates/{productId}/reconciliation`. The endpoint compares a bounded history of outgoing event intent to independently fetched downstream product/recommendation/review identity sets. It distinguishes pending publication, unavailable consumers, recent convergence windows and possible drift. It **does not** retry, repair, compensate or prove global consistency. See [operator reconciliation runbook](RECONCILIATION.md).
+
+## Operation correlation and publication progress
+
+The composite outbox now atomically persists an associated `composite_operations` metadata record, grouping stable event IDs and destinations under a UUID operation ID. Operator-only endpoints list these records and derive `PUBLISH_PENDING`, `DISPATCHING`, `BROKER_ACCEPTED`, or inconclusive journal status from outbox state. **Consumer application is not yet acknowledged or tracked**; `consumerStatus` remains `NOT_VERIFIED`. See [operation journal](OPERATIONS.md) and [read-only aggregate reconciliation](RECONCILIATION.md). This is not a completed distributed saga.

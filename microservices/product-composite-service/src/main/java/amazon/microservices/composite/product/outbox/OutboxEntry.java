@@ -18,6 +18,7 @@ public class OutboxEntry {
     public static final String PUBLISHED = "PUBLISHED";
 
     @Id private String id;
+    private String operationId;
     private String bindingName;
     private String payloadJson;
     private Integer partitionKey;
@@ -41,6 +42,7 @@ public class OutboxEntry {
         this.state=PENDING;
     }
     public String getId(){return id;}
+    public String getOperationId(){return operationId;}
     public String getBindingName(){return bindingName;}
     public String getPayloadJson(){return payloadJson;}
     public Integer getPartitionKey(){return partitionKey;}
@@ -52,6 +54,7 @@ public class OutboxEntry {
     public int getAttempts(){return attempts;}
     public Instant getPublishedAt(){return publishedAt;}
     public void setId(String id){this.id=id;}
+    public void setOperationId(String operationId){this.operationId=operationId;}
     public void setBindingName(String v){bindingName=v;}
     public void setPayloadJson(String v){payloadJson=v;}
     public void setPartitionKey(Integer v){partitionKey=v;}
