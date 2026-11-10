@@ -14,6 +14,7 @@ import java.time.Duration;
 @Document(collection = "orders")
 public class OrderEntity {
     public static final String PENDING = "PENDING";
+    public static final String RESERVING = "RESERVING";
     public static final String RESERVED = "RESERVED";
     public static final String CANCELLATION_PENDING = "CANCELLATION_PENDING";
     public static final String CANCELLED = "CANCELLED";
@@ -37,6 +38,9 @@ public class OrderEntity {
     private String status;
     private Instant createdAt;
     private Instant expiresAt;
+    // Durable processing claim; separate from product-level reservation tokens.
+    private String reservationLeaseId;
+    private Instant reservationLeaseUntil;
     // The order document is the authoritative mock-payment attempt record.
     private String paymentStatus;
     private String paymentEventId;
@@ -81,6 +85,8 @@ public class OrderEntity {
     public String getCurrency() { return currency; }
     public String getStatus() { return status; }
     public Instant getCreatedAt() { return createdAt; }
+    public String getReservationLeaseId() { return reservationLeaseId; }
+    public Instant getReservationLeaseUntil() { return reservationLeaseUntil; }
     public String getPaymentStatus() { return paymentStatus; }
     public String getPaymentEventId() { return paymentEventId; }
     public Instant getPaymentStartedAt() { return paymentStartedAt; }
@@ -103,6 +109,8 @@ public class OrderEntity {
     public void setCurrency(String currency) { this.currency = currency; }
     public void setStatus(String status) { this.status = status; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
+    public void setReservationLeaseId(String id) { this.reservationLeaseId = id; }
+    public void setReservationLeaseUntil(Instant until) { this.reservationLeaseUntil = until; }
     public void setPaymentStatus(String paymentStatus) { this.paymentStatus = paymentStatus; }
     public void setPaymentEventId(String paymentEventId) { this.paymentEventId = paymentEventId; }
     public void setPaymentStartedAt(Instant paymentStartedAt) { this.paymentStartedAt = paymentStartedAt; }

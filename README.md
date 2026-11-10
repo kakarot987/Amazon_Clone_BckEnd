@@ -800,3 +800,45 @@ products; one mock shipment and one mock return still represent the
 Existing legacy single-product orders remain readable through the
 original scalar fields and a one-line compatibility projection. No
 real payment, shipping or refund takes place.
+
+## Reservation processing claims and recovery (draft)
+
+Multi-item checkout now includes a durable intermediate `RESERVING`
+state with a unique order-processing claim and a two-minute expiry.
+The checkout handler atomically claims a `PENDING` order, or a
+`RESERVING` order whose earlier claim has expired, before it writes
+any product inventory. Simultaneous retries with the same idempotency
+key return the existing in-progress order instead of starting separate
+reservation loops.
+
+Each product reservation still uses the order ID in
+`reservedOrderIds` alongside a conditional atomic stock decrement.
+The order can only become `RESERVED` if the same claim still owns
+it and both the processing claim and order TTL are active.
+The background recovery worker does not touch active processing claims.
+When a claim expires it may retry the exact stored order manifest,
+which safely skips product IDs already held by that order.
+
+On an insufficient-stock error or an expired order deadline,
+the current claim atomically marks the order as
+`CANCELLATION_PENDING` before compensating any held lines.
+Compensation is idempotent per product token, and the recovery worker
+retries interrupted cancellation and payment-finalization operations.
+Older `PENDING` order documents can be claimed without migration;
+legacy order documents still project to a one-line manifest.
+
+**Important concurrency boundary:** This is *not* a
+multi-document MongoDB transaction, a globally fenced inventory
+ledger, or a distributed exactly-once protocol. A stale process
+can still race between checking its claim and updating a separate
+product document. Delayed network operations, a product deleted
+mid-flight, or failures longer than the claim TTL can require
+manual reconciliation. Do not use it for real charges or make
+production-grade stock consistency guarantees. The next hardening
+step would use MongoDB replica-set transactions or a durable
+reservation ledger with conditional fencing, plus transactional
+outbox and crash/fault-injection testing.
+
+Run the full Java 17/Testcontainers suite and review concurrent
+checkout, cancellation, mock payment and worker-recovery behavior
+before merging.

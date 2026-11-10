@@ -74,6 +74,9 @@ public class OrderRecoveryWorker {
 
     static boolean needsReconciliation(OrderEntity order, Instant now) {
         String status = order.getStatus();
+        if (OrderEntity.RESERVING.equals(status))
+            return order.getReservationLeaseUntil() == null
+                    || !order.getReservationLeaseUntil().isAfter(now);
         if (OrderEntity.PENDING.equals(status)
                 || OrderEntity.CANCELLATION_PENDING.equals(status)
                 || OrderEntity.EXPIRATION_PENDING.equals(status)
