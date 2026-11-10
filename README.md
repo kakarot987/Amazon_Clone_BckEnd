@@ -4,8 +4,8 @@ Spring Boot 3.1 / Java 17 microservices prototype: product, reviews,
 recommendations, composite product API, Spring Cloud Config, Eureka,
 Gateway and OAuth2 authorization.
 
-> This is **not** a complete shopping platform. Cart, inventory, checkout,
-> payments, orders and customer accounts have not yet been implemented.
+> This is a **microservices prototype**, not a production commerce platform.
+> All payments, carrier tracking and fulfillment operations are simulated.
 
 ## Verified build tooling
 
@@ -331,3 +331,99 @@ refund/capture API, settlement, chargebacks, or multi-item checkout.
 Order and stock records remain separate Mongo documents with best-effort
 recovery. Real payment integration requires audited provider reconciliation,
 an outbox, idempotency storage and stronger transactional guarantees.
+
+## Complete simulated fulfillment & shipment tracking phase (draft)
+
+This phase adds **mock** shipping and tracking for the single-product,
+`MOCK_PAID` orders created in the earlier payment phase. It does **not**
+contact real shipping carriers, print shipping labels, allocate a warehouse,
+collect a physical address, charge a credit card or fulfill a real order.
+The destination is a simple 2–32-character *zone code*, not an address.
+
+### Separation of roles
+
+Customers use their normal signed-in user token with `order:read` scope
+to retrieve tracking. Operators use a **separate OAuth client** called
+`mock-fulfillment`, configured with `AUTH_FULFILLMENT_CLIENT_SECRET` in
+the ignored `.env`. Only this service client has `fulfillment:read`
+and `fulfillment:write` scopes; the existing `writer` and `reader`
+clients do not receive these permissions.
+
+Set a fresh, non-default `AUTH_FULFILLMENT_CLIENT_SECRET` in `.env`
+and recreate the `auth-server` container. For a development-only service
+token, from the host with auth-server reachable:
+
+```sh
+# Auth server may not be host-exposed; use a trusted internal client instead
+# or a port forward limited to localhost, never public port exposure.
+curl -u "mock-fulfillment:$AUTH_FULFILLMENT_CLIENT_SECRET" \
+  -d grant_type=client_credentials \
+  -d 'scope=fulfillment:read fulfillment:write' \
+  http://localhost:9999/oauth2/token
+```
+
+Do not put tokens in source control, shell history or CI logs. The example
+requires a localhost-accessible development auth-server; it is **not**
+configured for public access by default.
+
+### Routes (through authenticated API Gateway)
+
+| Role | Method | Path | Scope |
+|---|---|---|---|
+| Customer | GET | `/product-composite/orders/{orderId}/shipment` | `order:read` |
+| Operator | POST | `/product-composite/fulfillment/shipments` | `fulfillment:write` |
+| Operator | GET | `/product-composite/fulfillment/shipments/{orderId}` | `fulfillment:read` |
+| Operator | POST | `/product-composite/fulfillment/shipments/{orderId}/events` | `fulfillment:write` |
+
+Create a shipment for a **mock-paid** order only:
+
+```json
+{"orderId":"<64-character-order-id>","destinationZone":"NORTH_01"}
+```
+
+Repeat the same creation request safely; one shipment document is stored per
+order. A different zone on a replay is rejected.
+
+Advance a shipment sequentially with a unique event ID:
+
+```json
+{"eventId":"mock-event-0001","status":"PACKED"}
+```
+
+State machine:
+
+```text
+CREATED -> PACKED -> SHIPPED -> IN_TRANSIT -> DELIVERED
+```
+
+Skipping milestones, moving backward or changing a `DELIVERED` shipment is
+rejected. Repeating an event with the same ID and outcome is idempotent,
+including after later milestones; the history is persisted with timestamps
+and Mongo optimistic concurrency checks. A reused event ID with a different
+outcome is rejected. Tracking numbers are `MOCK-` prefixed placeholders,
+not carrier tracking numbers.
+
+An included standard-library Python simulator can create or advance events
+with an operator token:
+
+```sh
+export FULFILLMENT_ACCESS_TOKEN='<scoped-operator-access-token>'
+python3 scripts/simulate-shipment.py create --order-id '<order-id>' --zone NORTH_01
+python3 scripts/simulate-shipment.py advance --order-id '<order-id>' --status PACKED
+python3 scripts/simulate-shipment.py advance --order-id '<order-id>' --status SHIPPED
+python3 scripts/simulate-shipment.py advance --order-id '<order-id>' --status IN_TRANSIT
+python3 scripts/simulate-shipment.py advance --order-id '<order-id>' --status DELIVERED
+```
+
+A `MOCK_PAID` order cannot be cancelled using the existing unpaid-order
+cancellation endpoint. Tracking reads require verified JWT identity;
+a different customer cannot read another customer's shipment. Internal
+`/internal/shipments/**` endpoints must remain private to Docker networks.
+
+**Limitations:** No carrier API, physical pickup/delivery, refund, shipment
+failure/return process, address encryption, webhooks, inventory pick ledger,
+multi-item shipments, or payment fulfillment approval. The operator API is
+secured by the mock OAuth client and gateway scopes, not by an enterprise
+staff/warehouse identity service. Real commerce must use a dedicated
+fulfillment system, audited access controls, returns/refunds and tested
+delivery reconciliation. Run the Java 17 CI suite before merging.
