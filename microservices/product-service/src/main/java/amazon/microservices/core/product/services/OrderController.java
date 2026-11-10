@@ -223,7 +223,9 @@ public class OrderController {
         Query query = Query.query(new Criteria().andOperator(
                 Criteria.where("_id").is(id),
                 Criteria.where("status").is(OrderEntity.RESERVING),
-                Criteria.where("reservationLeaseId").is(claim)));
+                Criteria.where("reservationLeaseId").is(claim),
+                Criteria.where("reservationLeaseUntil").gt(Instant.now()),
+                Criteria.where("expiresAt").gt(Instant.now())));
         Update update = new Update().set("status", OrderEntity.RESERVED)
                 .unset("reservationLeaseId").unset("reservationLeaseUntil");
         return mongo.findAndModify(query, update,
