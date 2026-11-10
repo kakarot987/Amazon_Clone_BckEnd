@@ -36,7 +36,7 @@ import org.springframework.security.oauth2.server.authorization.client.InMemoryR
 import org.springframework.security.oauth2.server.authorization.config.annotation.web.configurers.OAuth2AuthorizationServerConfigurer;
 import org.springframework.security.oauth2.server.authorization.settings.TokenSettings;
 import org.springframework.security.web.util.matcher.RequestMatcher;
-import sample.jose.Jwks;
+import sample.jose.SigningKeyLoader;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -111,7 +111,13 @@ public class AuthorizationServerConfig {
       @Value("${AUTH_FULFILLMENT_CLIENT_SECRET}") String fulfillmentClientSecret,
       @Value("${AUTH_RETURNS_CLIENT_SECRET}") String returnsClientSecret,
       @Value("${AUTH_MODERATOR_CLIENT_SECRET}") String moderatorClientSecret,
+      @Value("${AUTH_DEMO_USER}") String demoUser,
+      @Value("${AUTH_DEMO_PASSWORD}") String demoPassword,
+      @Value("${AUTH_SECURITY_STRICT:false}") boolean strictMode,
       PasswordEncoder passwordEncoder) {
+    AuthCredentialPolicy.validate(strictMode, demoUser, demoPassword,
+        writerClientSecret, readerClientSecret, fulfillmentClientSecret,
+        returnsClientSecret, moderatorClientSecret);
     RegisteredClient writerClient = RegisteredClient.withId(UUID.randomUUID().toString())
       .clientId("writer")
       .clientSecret(passwordEncoder.encode(writerClientSecret))
@@ -201,8 +207,15 @@ public class AuthorizationServerConfig {
   }
 
   @Bean
-  public JWKSource<SecurityContext> jwkSource() {
-    RSAKey rsaKey = Jwks.generateRsa();
+  public JWKSource<SecurityContext> jwkSource(
+      @Value("${AUTH_JWT_KEYSTORE_PATH:}") String keystorePath,
+      @Value("${AUTH_JWT_KEYSTORE_PASSWORD:}") String storePassword,
+      @Value("${AUTH_JWT_KEY_ALIAS:}") String keyAlias,
+      @Value("${AUTH_JWT_KEY_PASSWORD:}") String keyPassword,
+      @Value("${AUTH_REQUIRE_PERSISTENT_KEYS:false}") boolean requirePersistent,
+      @Value("${AUTH_SECURITY_STRICT:false}") boolean strictMode) {
+    RSAKey rsaKey = SigningKeyLoader.loadOrGenerate(keystorePath, storePassword,
+        keyAlias, keyPassword, requirePersistent || strictMode);
     JWKSet jwkSet = new JWKSet(rsaKey);
     return (jwkSelector, securityContext) -> jwkSelector.select(jwkSet);
   }

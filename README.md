@@ -15,6 +15,7 @@ A distributed commerce **portfolio prototype** with product discovery, carts, mu
 | [Fenced saga supervision](docs/SAGA_SUPERVISION.md) | Opt-in bounded recovery status monitor; no compensation |
 | [Operator triage](docs/SAGA_TRIAGE.md) | Review queue and idempotent investigation notes without replay |
 | [Recovery operator controls](docs/RECOVERY_CONTROLS.md) | Safe manual evidence rechecks, retry budget and queue-head diagnostics |
+| [Auth signing key hardening](docs/AUTH_HARDENING.md) | Opt-in persistent RSA JWT keys, credential checks and rotation limitations |
 | [Live demo walkthrough](docs/DEMO.md) | Reproducible local demo and broker-recovery recording plan |
 | [Postman collection](postman/Amazon-Clone-Backend.postman_collection.json) | Authenticated request flow and assertions |
 | [Sample product](samples/product-demo.json) | Non-sensitive product/review/recommendation test data |
@@ -55,7 +56,7 @@ The smoke test checks gateway health and rejects an unauthenticated catalog requ
 ACCESS_TOKEN="your-local-demo-token" bash scripts/demo-catalog.sh
 ```
 
-The authorization server is not published on a host port in default Compose; token acquisition needs an explicitly configured **localhost-only** development access path. Do not paste tokens into Git or commit Postman environments. The demo script creates a unique sample product, expects `202 Accepted` for persisted outgoing intent, and polls the eventually consistent read endpoint. The [walkthrough](docs/DEMO.md) covers the Postman cart/checkout flow, optional operator audit, and manual RabbitMQ outage/recovery exercise.
+The auth server also has an [opt-in persistent signing key setup](docs/AUTH_HARDENING.md) with strict local credentials; its identity/client store remains in memory. The authorization server is not published on a host port in default Compose; token acquisition needs an explicitly configured **localhost-only** development access path. Do not paste tokens into Git or commit Postman environments. The demo script creates a unique sample product, expects `202 Accepted` for persisted outgoing intent, and polls the eventually consistent read endpoint. The [walkthrough](docs/DEMO.md) covers the Postman cart/checkout flow, optional operator audit, and manual RabbitMQ outage/recovery exercise.
 
 ## Architecture at a glance
 

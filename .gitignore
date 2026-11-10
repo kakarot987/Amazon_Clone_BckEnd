@@ -32,3 +32,11 @@ ML-labb
 .env
 .env.*
 !.env.example
+
+# Signing keys and local secret mounts: never commit
+/secrets/
+*.p12
+*.pfx
+*.jks
+*.pem
+*.key

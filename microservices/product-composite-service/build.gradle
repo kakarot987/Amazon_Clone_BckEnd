@@ -63,7 +63,7 @@ dependencies {
 	testImplementation 'io.projectreactor:reactor-test'
 	testImplementation 'org.testcontainers:junit-jupiter'
 	testImplementation 'org.testcontainers:mongodb'
-	testImplementation platform('org.testcontainers:testcontainers-bom:1.17.6')
+	testImplementation platform('org.testcontainers:testcontainers-bom:1.21.4')
 }
 
 dependencyManagement {

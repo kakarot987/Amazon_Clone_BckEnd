@@ -28,8 +28,51 @@ jobs:
           python3 -m json.tool postman/Amazon-Clone-Backend.postman_collection.json >/dev/null
           python3 -m json.tool samples/product-demo.json >/dev/null
           bash -n scripts/demo-catalog.sh
+          bash -n scripts/generate-auth-keystore.sh
+      - name: Verify Docker daemon for Testcontainers
+        run: |
+          docker version
+          docker info --format '{{.ServerVersion}}'
+      - name: Print resolved Testcontainers core version
+        run: gradle :microservices:product-composite-service:dependencyInsight --dependency org.testcontainers:testcontainers --configuration testRuntimeClasspath
       - name: Run Gradle checks (including Testcontainers)
         run: gradle clean build --stacktrace
+      - name: Show first failure details from JUnit XML
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import glob
+          import xml.etree.ElementTree as ET
+
+          shown = 0
+          for file in sorted(glob.glob("**/build/test-results/test/TEST-*.xml", recursive=True)):
+              try:
+                  root = ET.parse(file).getroot()
+              except ET.ParseError:
+                  continue
+              for case in root.iter("testcase"):
+                  failure = case.find("failure")
+                  if failure is None:
+                      failure = case.find("error")
+                  if failure is None:
+                      continue
+                  print(file, case.get("classname"), case.get("name"))
+                  print("Failure type:", failure.get("type", "unknown"))
+                  for line in (failure.text or "").splitlines():
+                      if any(x in line for x in (
+                          "Caused by:", "DockerClientProviderStrategy",
+                          "BadRequestException", "client version",
+                          "NoClassDefFoundError", "Cannot connect to Docker"
+                      )):
+                          print(line[:500])
+                  shown += 1
+                  if shown >= 4:
+                      break
+              if shown >= 4:
+                  break
+          if shown == 0:
+              print("No JUnit XML failure messages available.")
+          PY
       - name: Upload test failure reports
         if: failure()
         uses: actions/upload-artifact@v4
