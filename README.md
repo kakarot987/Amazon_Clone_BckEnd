@@ -14,6 +14,7 @@ A distributed commerce **portfolio prototype** with product discovery, carts, mu
 | [Consumer receipt evidence](docs/RECEIPTS.md) | Authenticated read-only consumer transaction verification |
 | [Fenced saga supervision](docs/SAGA_SUPERVISION.md) | Opt-in bounded recovery status monitor; no compensation |
 | [Operator triage](docs/SAGA_TRIAGE.md) | Review queue and idempotent investigation notes without replay |
+| [Recovery operator controls](docs/RECOVERY_CONTROLS.md) | Safe manual evidence rechecks, retry budget and queue-head diagnostics |
 | [Live demo walkthrough](docs/DEMO.md) | Reproducible local demo and broker-recovery recording plan |
 | [Postman collection](postman/Amazon-Clone-Backend.postman_collection.json) | Authenticated request flow and assertions |
 | [Sample product](samples/product-demo.json) | Non-sensitive product/review/recommendation test data |

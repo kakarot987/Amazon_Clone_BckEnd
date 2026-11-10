@@ -51,3 +51,7 @@ Investigation notes are append-only **within this API**. Database administrators
 ## Known limitations
 
 The review queue is a live, bounded view and may change between calls. Notes do not provide an atomic snapshot of the case; a race with a supervisor or direct database writes can affect state between validation and insertion. As a result, note eligibility is checked at request time rather than being a transactional claim, and triage notes must never authorize business mutations. Deployed MongoDB should have the recommended `triage_by_operation_idx` index for bounded per-operation lookups; verify it exists rather than relying solely on mapping annotations.
+
+## Reviewing a case again
+
+After documenting a `NEEDS_REVIEW` incident, use [recovery operator controls](RECOVERY_CONTROLS.md) to request a bounded, idempotent **receipt recheck**. This does **not** replay events, compensate business state, or mark the case resolved. The recheck request has its own `fulfillment:write` scope and a separate audit record.
