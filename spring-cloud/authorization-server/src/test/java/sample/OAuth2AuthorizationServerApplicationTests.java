@@ -35,7 +35,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *
  * @author Josh Cummings
  */
-@SpringBootTest(properties = {"eureka.client.enabled=false", "spring.cloud.config.enabled=false","spring.cloud.compatibility-verifier.enabled=false"})
+@SpringBootTest(properties = {
+    "spring.config.location=classpath:/auth-test-application.yml",
+    "eureka.client.enabled=false",
+    "spring.cloud.config.enabled=false",
+    "spring.cloud.compatibility-verifier.enabled=false",
+    "AUTH_WRITER_CLIENT_SECRET=secret-writer",
+    "AUTH_READER_CLIENT_SECRET=secret-reader",
+    "AUTH_DEMO_USER=test-user",
+    "AUTH_DEMO_PASSWORD=test-password",
+    "AUTH_ISSUER_URI=http://localhost:9999"
+})
 @AutoConfigureMockMvc
 class OAuth2AuthorizationServerApplicationTests {
 

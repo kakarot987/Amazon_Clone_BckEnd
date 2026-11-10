@@ -7,6 +7,24 @@ Gateway and OAuth2 authorization.
 > This is **not** a complete shopping platform. Cart, inventory, checkout,
 > payments, orders and customer accounts have not yet been implemented.
 
+## Verified build tooling
+
+The repository previously included an unrecognized Gradle Wrapper JAR that
+GitHub Actions correctly rejected before running tests. The legacy wrapper
+binary and launcher scripts have been removed **rather than bypassing
+wrapper-integrity validation**. Install **Gradle 8.6** from the official Gradle
+distribution or use a trusted package manager. On CI, the official
+`gradle/actions/setup-gradle@v4` action installs Gradle 8.6. Build with:
+
+```sh
+gradle --version
+gradle clean build
+```
+
+Do not restore the old wrapper JAR. To reintroduce a wrapper later, regenerate
+it from an independently verified Gradle installation and require GitHub
+Actions wrapper validation to pass.
+
 ## Required setup
 
 1. Revoke previously committed credentials, including the exposed GitHub token.
@@ -21,7 +39,7 @@ Gateway and OAuth2 authorization.
 ```sh
 cp .env.example .env
 # Edit .env before proceeding.
-./gradlew clean bootJar
+gradle clean bootJar
 docker compose build
 docker compose up -d
 docker compose ps
