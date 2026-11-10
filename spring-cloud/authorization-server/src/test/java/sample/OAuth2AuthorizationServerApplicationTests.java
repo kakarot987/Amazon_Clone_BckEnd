@@ -36,6 +36,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * @author Josh Cummings
  */
 @SpringBootTest(properties = {
+    "spring.config.location=classpath:/auth-test-application.yml",
     "eureka.client.enabled=false",
     "spring.cloud.config.enabled=false",
     "spring.cloud.compatibility-verifier.enabled=false",
