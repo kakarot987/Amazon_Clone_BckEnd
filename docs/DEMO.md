@@ -83,3 +83,7 @@ With a separate operator token holding `fulfillment:read`, request `GET /product
 ## Optional operation journal demo
 
 With a `fulfillment:read` operator JWT, call `GET /product-composite/fulfillment/aggregates/{productId}/operations?limit=10` after creating the demo product. Select the latest operation ID and inspect `GET /product-composite/fulfillment/operations/{operationId}`. Show that the event IDs and publication states are durable; during broker failure the result may be `PUBLISH_PENDING` or `DISPATCHING`, and after recovery `BROKER_ACCEPTED`. The `consumerStatus` field stays `NOT_VERIFIED`. These are observed runtime outcomes, not guaranteed demo timestamps or proof of business convergence. See [operations guide](OPERATIONS.md).
+
+## Optional verified consumer receipt demo
+
+With the operator JWT, call `GET /product-composite/fulfillment/operations/{operationId}/receipts` after examining a tracked operation. The endpoint uses a short-lived HMAC request to ask internal consumers whether their transactional inbox includes the original event ID and matching fingerprint. Observe `PUBLISH_PENDING`, `RECEIPTS_MISSING`, `INCONCLUSIVE`, `CONFLICT`, or `ALL_RECEIPTS_VERIFIED`; never claim success without inspecting the actual response. No recovery mutations are performed. See [receipt evidence guide](RECEIPTS.md).

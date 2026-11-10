@@ -85,3 +85,7 @@ Example shape (illustrative, not runtime output):
 ## Next step: explicit consumer receipts
 
 For true saga state management, introduce an authenticated or signed, idempotent **consumer outcome protocol** keyed by stable `eventId` and target binding, persisted transactionally with each consumer's business mutation. The composite coordinator must reject unknown event IDs, conflicting receipts and stale completion signals, then represent terminal success/failure, quarantine and compensation with separately audited policies. Use conditional writes or fenced leases for competing coordinators and test process crash, replay, poison records and consumer unavailability before allowing any compensation. Do not infer success from reading a product alone.
+
+## Signed consumer inbox evidence
+
+An operator can request `GET /product-composite/fulfillment/operations/{operationId}/receipts` with `fulfillment:read` to inspect transactionally committed consumer inbox records through signed internal-only HTTP probes. An outcome of `ALL_RECEIPTS_VERIFIED` is evidence that every tracked event was once applied at its destination, **not** a globally consistent current aggregate or completed saga. The feature requires a unique `APP_RECEIPT_PROBE_SECRET` shared by the four data services; without it the audit returns 503 and consumer probe endpoints fail closed. See [consumer receipts](RECEIPTS.md).
