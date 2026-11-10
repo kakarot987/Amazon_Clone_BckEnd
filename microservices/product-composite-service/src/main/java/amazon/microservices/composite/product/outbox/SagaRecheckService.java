@@ -105,7 +105,7 @@ public class SagaRecheckService {
                                     return Mono.error(new ResponseStatusException(HttpStatus.CONFLICT,
                                             "Recheck budget exhausted"));
                                 SagaRecheckRequest intent = new SagaRecheckRequest(
-                                        id, operationId, principal, reason, (int) count + 1, now);
+                                        id, operationId, principal, reason, count.intValue() + 1, now);
                                 Query eligible = Query.query(new Criteria().andOperator(
                                         Criteria.where("_id").is(operationId),
                                         Criteria.where("state").is(SagaSupervision.NEEDS_REVIEW),
