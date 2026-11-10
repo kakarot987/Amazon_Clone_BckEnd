@@ -44,6 +44,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
     "AUTH_READER_CLIENT_SECRET=secret-reader",
     "AUTH_DEMO_USER=test-user",
     "AUTH_DEMO_PASSWORD=test-password",
+    "AUTH_FULFILLMENT_CLIENT_SECRET=test-fulfillment-client-secret",
     "AUTH_ISSUER_URI=http://localhost:9999"
 })
 @AutoConfigureMockMvc
