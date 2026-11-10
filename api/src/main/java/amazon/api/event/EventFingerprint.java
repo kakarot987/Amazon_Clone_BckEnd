@@ -4,7 +4,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import amazon.util.exceptions.EventProcessingException;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -29,7 +28,7 @@ public final class EventFingerprint {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             return HexFormat.of().formatHex(md.digest(body));
         } catch (JsonProcessingException | NoSuchAlgorithmException ex) {
-            throw new EventProcessingException("Unable to fingerprint incoming event");
+            throw new IllegalArgumentException("Unable to fingerprint incoming event");
         }
     }
 
@@ -39,7 +38,7 @@ public final class EventFingerprint {
         String id = event.getEventId();
         if (id == null) return null; // Old broker messages continue through legacy handling.
         if (!id.matches("[a-zA-Z0-9._-]{8,100}"))
-            throw new EventProcessingException("Invalid event ID");
+            throw new IllegalArgumentException("Invalid event ID");
         return id;
     }
 }
