@@ -278,7 +278,7 @@ public class OrderController {
 
     private PaymentIntent toPaymentIntent(OrderEntity order) {
         return new PaymentIntent(order.getId(), order.getPaymentStatus(),
-                order.getUnitPrice().multiply(BigDecimal.valueOf(order.getQuantity())),
+                order.getTotal(),
                 order.getCurrency(), order.getPaymentStartedAt(), order.getExpiresAt());
     }
 
@@ -353,73 +353,66 @@ public class OrderController {
     private Mono<OrderReceipt> finishPaymentConfirmation(OrderEntity order) {
         if (!OrderEntity.PAYMENT_CONFIRMING.equals(order.getStatus()))
             return Mono.just(receipt(order));
-        Criteria filter = Criteria.where("productId").is(order.getProductId())
-                .and("reservedOrderIds").is(order.getId());
-        Update releaseToken = new Update().pull("reservedOrderIds", order.getId());
-        return mongo.findAndModify(Query.query(filter), releaseToken,
-                        FindAndModifyOptions.options().returnNew(true), ProductEntity.class)
-                .hasElement()
-                .flatMap(removed -> {
-                    if (removed) return Mono.just(true);
-                    return products.findByProductId(order.getProductId())
-                            .switchIfEmpty(Mono.error(new NotFoundException("Product missing during payment confirmation")))
-                            .flatMap(product -> {
-                                if (product.getReservedOrderIds() != null
-                                        && product.getReservedOrderIds().contains(order.getId()))
-                                    return Mono.error(new InvalidInputException(
-                                            "Unable to finalize mock payment reservation"));
-                                return Mono.just(false);
-                            });
-                })
+        // Remove every product's hold token WITHOUT increasing its stock.
+        // Each individual update can be safely replayed after a crash.
+        return Flux.fromIterable(order.getItems())
+                .concatMap(line -> finalizeLine(order.getId(), line))
                 .then(orders.findById(order.getId()))
                 .flatMap(current -> {
                     if (OrderEntity.MOCK_PAID.equals(current.getStatus()))
                         return Mono.just(receipt(current));
                     if (!OrderEntity.PAYMENT_CONFIRMING.equals(current.getStatus()))
-                        return Mono.error(new InvalidInputException("Order changed during payment confirmation"));
+                        return Mono.error(new InvalidInputException(
+                                "Order changed during payment confirmation"));
                     current.setStatus(OrderEntity.MOCK_PAID);
                     current.setMockPaidAt(Instant.now());
                     return orders.save(current)
                             .onErrorResume(OptimisticLockingFailureException.class,
-                                    error -> orders.findById(order.getId()))
+                                    ex -> orders.findById(order.getId()))
                             .map(this::receipt);
+                });
+    }
+
+    private Mono<Void> finalizeLine(String orderId, OrderLine line) {
+        Criteria filter = Criteria.where("productId").is(line.productId())
+                .and("reservedOrderIds").is(orderId);
+        return mongo.findAndModify(Query.query(filter),
+                        new Update().pull("reservedOrderIds", orderId),
+                        FindAndModifyOptions.options().returnNew(true), ProductEntity.class)
+                .hasElement()
+                .flatMap(removed -> {
+                    if (removed) return Mono.<Void>empty();
+                    return products.findByProductId(line.productId())
+                            .switchIfEmpty(Mono.error(new NotFoundException(
+                                    "Product missing during payment confirmation: " + line.productId())))
+                            .flatMap(product -> {
+                                if (product.getReservedOrderIds() != null
+                                        && product.getReservedOrderIds().contains(orderId))
+                                    return Mono.error(new InvalidInputException(
+                                            "Cannot finalize mock payment item " + line.productId()));
+                                return Mono.<Void>empty();
+                            });
                 });
     }
 
     private Mono<OrderReceipt> finishCancellation(OrderEntity order) {
         if (OrderEntity.CANCELLED.equals(order.getStatus())
-                || OrderEntity.EXPIRED.equals(order.getStatus())) return Mono.just(receipt(order));
+                || OrderEntity.EXPIRED.equals(order.getStatus()))
+            return Mono.just(receipt(order));
         if (!OrderEntity.CANCELLATION_PENDING.equals(order.getStatus())
                 && !OrderEntity.EXPIRATION_PENDING.equals(order.getStatus())
                 && !OrderEntity.PAYMENT_FAILED_PENDING.equals(order.getStatus()))
             return Mono.error(new InvalidInputException("Cancellation is unavailable"));
 
-        Criteria criteria = Criteria.where("productId").is(order.getProductId())
-                .and("reservedOrderIds").is(order.getId())
-                .and("stockQuantity").lte(Integer.MAX_VALUE - order.getQuantity());
-        Update release = new Update().inc("stockQuantity", order.getQuantity())
-                .pull("reservedOrderIds", order.getId());
-
-        return mongo.findAndModify(Query.query(criteria), release,
-                        FindAndModifyOptions.options().returnNew(true), ProductEntity.class)
-                .hasElement()
-                .flatMap(released -> {
-                    if (released) return Mono.just(true);
-                    return products.findByProductId(order.getProductId())
-                            .switchIfEmpty(Mono.error(new NotFoundException(
-                                    "Product missing during cancellation")))
-                            .flatMap(product -> {
-                                if (product.getReservedOrderIds() != null
-                                        && product.getReservedOrderIds().contains(order.getId()))
-                                    return Mono.error(new InvalidInputException(
-                                            "Cannot release reservation; check inventory"));
-                                return Mono.just(false);
-                            });
-                })
+        // When an earlier step failed, some line tokens may be absent. Only
+        // products that still contain the reservation ID are incremented.
+        return Flux.fromIterable(order.getItems())
+                .concatMap(line -> releaseLine(order.getId(), line))
                 .then(orders.findById(order.getId()))
                 .flatMap(current -> {
                     if (OrderEntity.CANCELLED.equals(current.getStatus())
-                            || OrderEntity.EXPIRED.equals(current.getStatus()))
+                            || OrderEntity.EXPIRED.equals(current.getStatus())
+                            || OrderEntity.PAYMENT_FAILED.equals(current.getStatus()))
                         return Mono.just(receipt(current));
                     if (!OrderEntity.CANCELLATION_PENDING.equals(current.getStatus())
                             && !OrderEntity.EXPIRATION_PENDING.equals(current.getStatus())
@@ -434,8 +427,32 @@ public class OrderController {
                         current.setPaymentStatus("DECLINED");
                     return orders.save(current)
                             .onErrorResume(OptimisticLockingFailureException.class,
-                                    ignored -> orders.findById(order.getId()))
+                                    ex -> orders.findById(order.getId()))
                             .map(this::receipt);
+                });
+    }
+
+    private Mono<Void> releaseLine(String orderId, OrderLine line) {
+        Criteria criteria = Criteria.where("productId").is(line.productId())
+                .and("reservedOrderIds").is(orderId)
+                .and("stockQuantity").lte(Integer.MAX_VALUE - line.quantity());
+        Update release = new Update().inc("stockQuantity", line.quantity())
+                .pull("reservedOrderIds", orderId);
+        return mongo.findAndModify(Query.query(criteria), release,
+                        FindAndModifyOptions.options().returnNew(true), ProductEntity.class)
+                .hasElement()
+                .flatMap(released -> {
+                    if (released) return Mono.<Void>empty();
+                    return products.findByProductId(line.productId())
+                            .switchIfEmpty(Mono.error(new NotFoundException(
+                                    "Product missing during stock release: " + line.productId())))
+                            .flatMap(product -> {
+                                if (product.getReservedOrderIds() != null
+                                        && product.getReservedOrderIds().contains(orderId))
+                                    return Mono.error(new InvalidInputException(
+                                            "Stock release failed; inspect product " + line.productId()));
+                                return Mono.<Void>empty();
+                            });
                 });
     }
 
@@ -484,6 +501,8 @@ public class OrderController {
                 order.getCurrency(), order.getCreatedAt(), order.getExpiresAt());
         response.setPaymentStatus(order.getPaymentStatus());
         response.setMockPaidAt(order.getMockPaidAt());
+        response.setItems(order.getItems());
+        response.setTotal(order.getTotal());
         return response;
     }
 
