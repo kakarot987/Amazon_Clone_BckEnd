@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
@@ -86,7 +87,7 @@ public class SagaTriageService {
         String actorFingerprint = sha256(actor.getIssuer() + "\u0000" + actor.getSubject());
         String noteId = sha256(operationId + "\u0000" + idempotencyKey);
         SagaTriageNote proposed = new SagaTriageNote(noteId, operationId, actorFingerprint,
-                body.category(), clean, Instant.now());
+                body.category(), clean, Instant.now().truncatedTo(ChronoUnit.MILLIS));
 
         return mongo.findById(operationId, SagaSupervision.class)
                 .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND,
