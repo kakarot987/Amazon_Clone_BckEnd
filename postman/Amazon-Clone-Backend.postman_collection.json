@@ -47,6 +47,10 @@
     {
       "key": "triageIdempotencyKey",
       "value": ""
+    },
+    {
+      "key": "recheckIdempotencyKey",
+      "value": ""
     }
   ],
   "item": [
@@ -579,6 +583,113 @@
             "type": "text/javascript",
             "exec": [
               "pm.test(\"Triage notes respond\",()=>pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "20 | Operator recovery overview",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{operatorToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/product-composite/fulfillment/recovery/overview",
+        "description": "fulfillment:read. Bounded supervision counters and oldest undelivered outbox head; no payloads/lease tokens, no writes."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Recovery overview responds\",()=>pm.response.to.have.status(200));",
+              "if(pm.response.code===200){const p=pm.response.json();pm.test(\"Review count is nonnegative\",()=>pm.expect(p.needsReview).to.be.at.least(0));}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "21 | Operator manual receipt recheck (NEEDS_REVIEW only)",
+      "request": {
+        "method": "POST",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{operatorToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/product-composite/fulfillment/operations/{{operationId}}/rechecks",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{recheckIdempotencyKey}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"CONSUMER_RESTORED\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Requires fulfillment:write. Set fresh 8+ char recheckIdempotencyKey. Only NEEDS_REVIEW, max 3 distinct requests. Requeues receipt inspection metadata only; DOES NOT replay business events."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Recheck accepted or rejected safely\",()=>pm.expect([200,409]).to.include(pm.response.code));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "22 | Operator read recheck request history",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{operatorToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/product-composite/fulfillment/operations/{{operationId}}/rechecks?limit=10",
+        "description": "Requires fulfillment:read. Shows immutable metadata-only manual recheck requests."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Recheck history responds\",()=>pm.response.to.have.status(200));"
             ]
           }
         }

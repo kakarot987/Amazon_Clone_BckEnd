@@ -51,3 +51,7 @@ Use the default [Postman collection](../postman/Amazon-Clone-Backend.postman_col
 ## Operator incident triage
 
 A separate [operator triage workflow](SAGA_TRIAGE.md) now lists `NEEDS_REVIEW` supervision records and accepts append-only, idempotent investigation notes on those cases only. Adding a note **does not** resolve/quarantine further, modify the supervision state, resend an event, compensate a saga or change any business data. Read requires `fulfillment:read`; writing a note requires `fulfillment:write` and a verified operator JWT. This remains a human investigation aid, not a recovery execution workflow.
+
+## Manual, audited evidence recheck requests
+
+A separate [recovery controls runbook](RECOVERY_CONTROLS.md) describes the operator-only manual recheck of a `NEEDS_REVIEW` record. A request is **not** an event replay: it atomically creates an immutable intent record and resets only the local supervision metadata to `PENDING` (including a new generation), so the opt-in worker may re-evaluate signed consumer receipts. This remains disabled if `APP_SAGA_ENABLED=false`; manual requests do not force the worker to run. Operators may issue at most three rechecks per operation.
