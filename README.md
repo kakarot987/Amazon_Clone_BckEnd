@@ -1067,3 +1067,78 @@ failed-write rollback of receipts, and stable JSON event identity.
 Run `gradle clean build` including Testcontainers, inspect the actual
 broker retry/DLQ configuration, and exercise a broker disconnect and
 redelivery in an isolated development stack before merging this draft.
+
+## Transactional publisher outbox and durable composite writes (draft)
+
+Product, review, and recommendation creation, updates and deletion
+requests no longer depend on publishing to RabbitMQ/Kafka inside the
+HTTP transaction. The composite service persists an **outgoing event
+batch** in its own MongoDB `composite_outbox` collection, commits
+with snapshot read concern and majority write concern, and only then
+returns HTTP `202 Accepted`. For an aggregate create or delete,
+all destination events are saved **atomically together**: one failed
+persistence operation prevents the entire batch from committing.
+
+The asynchronous `OutboxDispatcher` polls pending entries in creation
+order, uses an atomic **processing lease** for each event, preserves
+its original `eventId` on every retry, and records published events
+without deleting the journal. Broker rejection or a publish exception
+leaves the event pending with capped exponential retry (1–300 seconds).
+The dispatcher stops at a delayed/leased head event instead of
+overtaking it. A crashed worker's lease expires after two minutes,
+allowing another process to retry. Metrics include:
+`commerce_outbox_published_total` and
+`commerce_outbox_retries_total`.
+
+### Deployment requirements
+
+The composite service now requires MongoDB replica-set support, just
+like the product and recommendation services. The default Compose
+stack sets:
+
+```text
+SPRING_DATA_MONGODB_URI=mongodb://mongodb:27017/composite-outbox-db?replicaSet=rs0
+```
+
+Do not point this service at standalone MongoDB or run outbox writes
+without transactions. Run `docker compose config`, ensure the Mongo
+replica set is healthy, and back up any existing database volume before
+changing deployment settings. The alternate Kafka and partitioned
+Compose files need matching URI changes before being used with this
+phase. Allow the outbox collection's size and indexes to be monitored;
+set a deliberate retention policy only after broker replay windows and
+audit requirements are understood. Outbox payloads may contain
+customer-submitted review text, so use database access controls,
+backup encryption, and appropriate retention.
+
+### Delivery guarantees and operational cautions
+
+- `202 Accepted` means **events are durably queued**, not applied to
+  downstream databases. Read-after-write may return an older state.
+- Events are dispatched **at least once**, not exactly once.
+  `StreamBridge.send()` returning `true` is an acceptance signal,
+  not a broker publisher-confirm receipt. A crash after broker
+  acceptance but before marking `PUBLISHED` can cause redelivery;
+  consumer inboxes from PR #19 deduplicate those messages.
+- An outbox transaction makes event **intent** atomic within the
+  composite database. It does not guarantee atomic business changes
+  across product, review, and recommendation databases. A downstream
+  permanent failure may still leave a partial aggregate; that
+  requires a saga/reconciliation mechanism and operator tooling.
+- Current scheduling processes a bounded batch of up to 50 items per
+  poll and serializes delivery at the queue head to avoid overtaking.
+  A poison message can block later events. Investigate prolonged
+  retries and add a controlled quarantine/replay workflow before
+  production. This service is not a high-throughput ordering system.
+- Application clients must use stable request idempotency keys if
+  they require deduplicating entire HTTP requests; event IDs protect
+  **publication retries**, not repeated API submissions.
+
+### Verification
+
+The new MongoDB Testcontainers cases cover durable batches, atomic
+rollback after duplicate IDs, broker rejection, preserved retry state,
+head-of-queue blocking, and recovery of expired worker leases.
+Existing composite broker tests explicitly dispatch stored events.
+Run the complete Java 17 CI suite and test a real Docker Compose
+broker outage, recovery, and restart before merging the draft PR.
