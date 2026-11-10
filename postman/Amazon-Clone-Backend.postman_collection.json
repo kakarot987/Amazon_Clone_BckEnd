@@ -413,6 +413,36 @@
           }
         }
       ]
+    },
+    {
+      "name": "15 | Operator verify signed consumer receipts (read-only)",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{operatorToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/product-composite/fulfillment/operations/{{operationId}}/receipts",
+        "description": "Requires fulfillment:read. Signed internal reads compare durable consumer inbox fingerprints; missing evidence is not automatic saga failure. Secret must be configured in services."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Signed receipt audit responds\", () => pm.response.to.have.status(200));",
+              "if (pm.response.code === 200) { const data = pm.response.json(); pm.test(\"Known read-only evidence state\", () => pm.expect([\"INCOMPLETE_JOURNAL\",\"CONFLICT\",\"INCONCLUSIVE\",\"RECEIPTS_MISSING\",\"PUBLISH_PENDING\",\"ALL_RECEIPTS_VERIFIED\"]).to.include(data.status)); }"
+            ]
+          }
+        }
+      ]
     }
   ]
 }

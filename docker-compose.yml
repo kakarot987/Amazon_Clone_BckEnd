@@ -86,6 +86,7 @@ services:
     environment:
       <<: *service-env
       SERVER_PORT: 8080
+      APP_RECEIPT_PROBE_SECRET: ${APP_RECEIPT_PROBE_SECRET:?Set APP_RECEIPT_PROBE_SECRET in .env}
       SPRING_DATA_MONGODB_HOST: mongodb
       SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/product-db?replicaSet=rs0
       MOCK_PAYMENT_WEBHOOK_SECRET: ${MOCK_PAYMENT_WEBHOOK_SECRET:?Set MOCK_PAYMENT_WEBHOOK_SECRET in .env}
@@ -100,6 +101,7 @@ services:
     environment:
       <<: *service-env
       SERVER_PORT: 8080
+      APP_RECEIPT_PROBE_SECRET: ${APP_RECEIPT_PROBE_SECRET:?Set APP_RECEIPT_PROBE_SECRET in .env}
       SPRING_DATA_MONGODB_HOST: mongodb
       SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/recommendation-db?replicaSet=rs0
     depends_on: [config-server, mongodb, rabbitmq, eureka]
@@ -110,6 +112,7 @@ services:
     environment:
       <<: *service-env
       SERVER_PORT: 8080
+      APP_RECEIPT_PROBE_SECRET: ${APP_RECEIPT_PROBE_SECRET:?Set APP_RECEIPT_PROBE_SECRET in .env}
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql/review-db
       SPRING_DATASOURCE_USERNAME: user
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
@@ -121,6 +124,7 @@ services:
     environment:
       <<: *service-env
       SERVER_PORT: 8080
+      APP_RECEIPT_PROBE_SECRET: ${APP_RECEIPT_PROBE_SECRET:?Set APP_RECEIPT_PROBE_SECRET in .env}
       SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/composite-outbox-db?replicaSet=rs0
       MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,info,prometheus
       MANAGEMENT_TRACING_SAMPLING_PROBABILITY: 0.1
