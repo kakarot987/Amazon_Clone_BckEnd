@@ -1,6 +1,7 @@
 package amazon.api.commerce;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.time.Instant;
 
 /** Reservation only: RESERVED does not mean paid or fulfilled. */
@@ -12,6 +13,7 @@ public class OrderReceipt {
     private String productName;
     private BigDecimal unitPrice;
     private BigDecimal total;
+    private List<OrderLine> items;
     private String currency;
     private Instant createdAt;
     private Instant expiresAt;
@@ -32,6 +34,7 @@ public class OrderReceipt {
         this.productName = name;
         this.unitPrice = price;
         this.total = price.multiply(BigDecimal.valueOf(quantity));
+        this.items = List.of(new OrderLine(productId, quantity, name, price));
         this.currency = currency;
         this.createdAt = createdAt;
         this.expiresAt = expiresAt;
@@ -43,6 +46,7 @@ public class OrderReceipt {
     public String getProductName() { return productName; }
     public BigDecimal getUnitPrice() { return unitPrice; }
     public BigDecimal getTotal() { return total; }
+    public List<OrderLine> getItems() { return items; }
     public String getCurrency() { return currency; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getExpiresAt() { return expiresAt; }
@@ -55,6 +59,7 @@ public class OrderReceipt {
     public void setProductName(String name) { this.productName = name; }
     public void setUnitPrice(BigDecimal price) { this.unitPrice = price; }
     public void setTotal(BigDecimal total) { this.total = total; }
+    public void setItems(List<OrderLine> items) { this.items = items; }
     public void setCurrency(String currency) { this.currency = currency; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public void setExpiresAt(Instant expiresAt) { this.expiresAt = expiresAt; }
