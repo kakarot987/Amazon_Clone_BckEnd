@@ -507,7 +507,10 @@ public class OrderController {
      */
     Mono<OrderReceipt> reconcileOrder(String id, Instant now) {
         return orders.findById(id).flatMap(order -> {
-            if (OrderEntity.PENDING.equals(order.getStatus()))
+            if (OrderEntity.PENDING.equals(order.getStatus())
+                    || (OrderEntity.RESERVING.equals(order.getStatus())
+                        && (order.getReservationLeaseUntil() == null
+                            || !order.getReservationLeaseUntil().isAfter(now))))
                 return resume(order);
             if (OrderEntity.CANCELLATION_PENDING.equals(order.getStatus())
                     || OrderEntity.EXPIRATION_PENDING.equals(order.getStatus())
