@@ -173,51 +173,95 @@ public class OrderController {
 
     private record ProductSnapshot(OrderLine line, String currency) {}
 
+    /**
+     * A compare-and-set claim prevents simultaneous checkout retries and the
+     * recovery worker from running separate reservation loops for one order.
+     * Product tokens are still the durable idempotency mechanism.
+     */
     private Mono<OrderReceipt> resume(OrderEntity order) {
-        if (!OrderEntity.PENDING.equals(order.getStatus()))
+        if (!OrderEntity.PENDING.equals(order.getStatus())
+                && !OrderEntity.RESERVING.equals(order.getStatus()))
             return Mono.just(receipt(order));
-        if (order.getExpiresAt() != null && !order.getExpiresAt().isAfter(Instant.now()))
-            return failPendingReservation(order, new InvalidInputException("Order reservation has expired"));
-        return reserve(order)
-                .then(Mono.defer(() -> orders.findById(order.getId())
-                        .flatMap(current -> {
-                            if (!OrderEntity.PENDING.equals(current.getStatus()))
-                                return Mono.just(current);
-                            current.setStatus(OrderEntity.RESERVED);
-                            return orders.save(current)
-                                    .onErrorResume(OptimisticLockingFailureException.class,
-                                            ex -> orders.findById(order.getId()));
-                        })))
-                .map(this::receipt)
-                .onErrorResume(error -> failPendingReservation(order, error));
-    }
 
-    /** Compensation reuses the existing idempotent reservation-token release path. */
-    private Mono<OrderReceipt> failPendingReservation(OrderEntity original, Throwable problem) {
-        return orders.findById(original.getId())
-                .flatMap(current -> {
-                    if (!OrderEntity.PENDING.equals(current.getStatus()))
-                        return Mono.just(receipt(current));
-                    current.setStatus(OrderEntity.CANCELLATION_PENDING);
-                    return orders.save(current)
-                            .onErrorResume(OptimisticLockingFailureException.class,
-                                    ex -> orders.findById(original.getId()))
-                            .flatMap(again -> {
-                                if (OrderEntity.CANCELLATION_PENDING.equals(again.getStatus()))
-                                    return finishCancellation(again);
-                                return Mono.just(receipt(again));
-                            });
+        Instant now = Instant.now();
+        if (OrderEntity.RESERVING.equals(order.getStatus())
+                && order.getReservationLeaseUntil() != null
+                && order.getReservationLeaseUntil().isAfter(now))
+            return Mono.just(receipt(order));
+
+        String claim = java.util.UUID.randomUUID().toString();
+        Criteria eligible = new Criteria().orOperator(
+                Criteria.where("status").is(OrderEntity.PENDING),
+                new Criteria().andOperator(
+                        Criteria.where("status").is(OrderEntity.RESERVING),
+                        new Criteria().orOperator(
+                                Criteria.where("reservationLeaseUntil").lte(now),
+                                Criteria.where("reservationLeaseUntil").is(null))));
+        Query query = Query.query(new Criteria().andOperator(
+                Criteria.where("_id").is(order.getId()), eligible));
+        Update update = new Update()
+                .set("status", OrderEntity.RESERVING)
+                .set("reservationLeaseId", claim)
+                .set("reservationLeaseUntil", now.plus(Duration.ofMinutes(2)));
+        return mongo.findAndModify(query, update,
+                        FindAndModifyOptions.options().returnNew(true), OrderEntity.class)
+                .flatMap(owned -> {
+                    if (owned.getExpiresAt() == null
+                            || !owned.getExpiresAt().isAfter(Instant.now()))
+                        return failClaimedReservation(owned, claim,
+                                new InvalidInputException("Order reservation has expired"));
+                    return reserve(owned, claim)
+                            .then(Mono.defer(() -> completeReservation(owned.getId(), claim)))
+                            .onErrorResume(error -> failClaimedReservation(owned, claim, error));
                 })
-                // Preserve both the user-facing failure and any needed
-                // reconciliation state if cleanup has been interrupted.
-                .then(Mono.error(problem));
+                // Another request already owns the claim. Return its current
+                // progress without independently writing any inventory.
+                .switchIfEmpty(orders.findById(order.getId()).map(this::receipt));
     }
 
-    private Mono<Void> reserve(OrderEntity order) {
-        // Each product write is atomic, and each reservation is keyed by
-        // the order ID. Replaying after a crash never deducts it twice.
+    private Mono<OrderReceipt> completeReservation(String id, String claim) {
+        Query query = Query.query(new Criteria().andOperator(
+                Criteria.where("_id").is(id),
+                Criteria.where("status").is(OrderEntity.RESERVING),
+                Criteria.where("reservationLeaseId").is(claim)));
+        Update update = new Update().set("status", OrderEntity.RESERVED)
+                .unset("reservationLeaseId").unset("reservationLeaseUntil");
+        return mongo.findAndModify(query, update,
+                        FindAndModifyOptions.options().returnNew(true), OrderEntity.class)
+                .switchIfEmpty(Mono.error(new InvalidInputException(
+                        "Checkout reservation claim was superseded")))
+                .map(this::receipt);
+    }
+
+    /** Move the active claim into recoverable cancellation before releasing. */
+    private Mono<OrderReceipt> failClaimedReservation(OrderEntity order, String claim, Throwable problem) {
+        Query query = Query.query(new Criteria().andOperator(
+                Criteria.where("_id").is(order.getId()),
+                Criteria.where("status").is(OrderEntity.RESERVING),
+                Criteria.where("reservationLeaseId").is(claim)));
+        Update update = new Update().set("status", OrderEntity.CANCELLATION_PENDING)
+                .unset("reservationLeaseId").unset("reservationLeaseUntil");
+        return mongo.findAndModify(query, update,
+                        FindAndModifyOptions.options().returnNew(true), OrderEntity.class)
+                .flatMap(this::finishCancellation)
+                .then(Mono.<OrderReceipt>error(problem));
+    }
+
+    private Mono<Void> reserve(OrderEntity order, String claim) {
         return Flux.fromIterable(order.getItems())
-                .concatMap(line -> reserveLine(order.getId(), line))
+                .concatMap(line -> verifyReservationClaim(order.getId(), claim)
+                        .then(reserveLine(order.getId(), line)))
+                .then();
+    }
+
+    private Mono<Void> verifyReservationClaim(String orderId, String claim) {
+        return orders.findById(orderId)
+                .filter(current -> OrderEntity.RESERVING.equals(current.getStatus())
+                        && claim.equals(current.getReservationLeaseId())
+                        && current.getReservationLeaseUntil() != null
+                        && current.getReservationLeaseUntil().isAfter(Instant.now()))
+                .switchIfEmpty(Mono.error(new InvalidInputException(
+                        "Reservation ownership expired or changed")))
                 .then();
     }
 
