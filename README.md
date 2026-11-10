@@ -514,3 +514,38 @@ PR #9 had been merged into PR #8's branch *after* PR #8 was merged into
 branch is based directly on `main` and includes both the shipping code
 and this complete mock returns phase. Run `gradle clean build` and
 Docker end-to-end checks before merging.
+
+## Customer wishlist & saved items (draft)
+
+Wishlist items are saved **per signed-in user**, using the same opaque
+JWT issuer+subject identity scheme as carts. Application-only client
+credentials cannot access a personal wishlist. Customer-scoped
+permissions are `wishlist:read` and `wishlist:write`.
+
+```http
+GET    /product-composite/wishlist?page=0&size=20
+PUT    /product-composite/wishlist/items/{productId}
+DELETE /product-composite/wishlist/items/{productId}
+DELETE /product-composite/wishlist
+```
+
+**Behavior:** Saving is idempotent and supports out-of-stock items.
+An item must exist when first saved. Each wishlist stores up to 100
+distinct products in MongoDB with optimistic-concurrency retries;
+pages are capped at 100 entries. Entries are sorted by save time
+(newest first). Deleting a missing entry or clearing an empty wishlist
+is harmless. Wishlist reads show **current** catalog name, category,
+price, currency, stock availability and first image URL, not a stale
+snapshot. If a previously saved product is deleted, its entry stays
+with `productExists: false` and can still be removed.
+
+The saved product ID and timestamp are the durable data; the current
+catalog metadata is calculated on each read. No inventory is reserved,
+prices are not guaranteed, and saving or removing items does not change
+the cart or any order. Checkout must always revalidate stock and price.
+
+**Limits:** A wishlist is not a stock-alert subscription, price-watch
+system, recommendation algorithm or inventory hold. Public access
+must pass through the authenticated Gateway; internal wishlist routes
+must remain private. Run the Java 17 CI tests and end-to-end checks
+before merging.
