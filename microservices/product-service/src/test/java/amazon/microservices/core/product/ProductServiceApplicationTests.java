@@ -1018,19 +1018,17 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
     orderRepository.save(order).block();
 
     client.get().uri("/internal/review-eligibility/" + CART_OWNER + "/product/601")
-      .exchange().expectStatus().isOk().expectBody()
-      .json("false");
-    order.setStatus(OrderEntity.MOCK_PAID);
+      .exchange().expectStatus().isOk().expectBody(Boolean.class).isEqualTo(false);
     order = orderRepository.findById(id).block();
     order.setStatus(OrderEntity.MOCK_PAID);
     orderRepository.save(order).block();
 
     client.get().uri("/internal/review-eligibility/" + CART_OWNER + "/product/601")
-      .exchange().expectStatus().isOk().expectBody().json("true");
+      .exchange().expectStatus().isOk().expectBody(Boolean.class).isEqualTo(true);
     client.get().uri("/internal/review-eligibility/" + OTHER_OWNER + "/product/601")
-      .exchange().expectStatus().isOk().expectBody().json("false");
+      .exchange().expectStatus().isOk().expectBody(Boolean.class).isEqualTo(false);
     client.get().uri("/internal/review-eligibility/" + CART_OWNER + "/product/602")
-      .exchange().expectStatus().isOk().expectBody().json("false");
+      .exchange().expectStatus().isOk().expectBody(Boolean.class).isEqualTo(false);
   }
 
   private void sendCreateProductEvent(int productId) {
