@@ -1252,6 +1252,67 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
     assertEquals(6, repository.findByProductId(742).block().getStockQuantity());
   }
 
+
+  @Test
+  void recoveryFinishesExpiredClaimWithoutDeductingHeldProductTwice() {
+    addCheckoutProduct(751, 8, "USD", "4.00", 2);
+    addCheckoutProduct(752, 6, "USD", "5.00", 3);
+    String id = String.format("%064x", 9751);
+    OrderEntity order = new OrderEntity(id, CART_OWNER, 751, 2,
+        "Bundle item 751", new java.math.BigDecimal("4.00"), "USD");
+    order.setItems(java.util.List.of(
+        new amazon.api.commerce.OrderLine(751, 2, "Bundle item 751",
+            new java.math.BigDecimal("4.00")),
+        new amazon.api.commerce.OrderLine(752, 3, "Bundle item 752",
+            new java.math.BigDecimal("5.00"))));
+    order.setStatus(OrderEntity.RESERVING);
+    order.setReservationLeaseId("abandoned-claim");
+    order.setReservationLeaseUntil(Instant.now().minusSeconds(10));
+    orderRepository.save(order).block();
+
+    // An earlier process reserved product 751 before crashing.
+    var first = repository.findByProductId(751).block();
+    first.setStockQuantity(6);
+    first.setReservedOrderIds(java.util.List.of(id));
+    repository.save(first).block();
+
+    recoveryWorker.recoverOnce().block();
+    OrderEntity recovered = orderRepository.findById(id).block();
+    assertEquals(OrderEntity.RESERVED, recovered.getStatus());
+    assertNull(recovered.getReservationLeaseId());
+    assertEquals(6, repository.findByProductId(751).block().getStockQuantity());
+    assertEquals(3, repository.findByProductId(752).block().getStockQuantity());
+    recoveryWorker.recoverOnce().block();
+    assertEquals(6, repository.findByProductId(751).block().getStockQuantity());
+    assertEquals(3, repository.findByProductId(752).block().getStockQuantity());
+  }
+
+  @Test
+  void workerSkipsActiveClaimAndReleasesOnExpiredOrderClaim() {
+    addCheckoutProduct(761, 4, "USD", "8.00", 2);
+    String id = String.format("%064x", 9761);
+    OrderEntity order = new OrderEntity(id, CART_OWNER, 761, 2,
+        "Bundle item 761", new java.math.BigDecimal("8.00"), "USD");
+    order.setStatus(OrderEntity.RESERVING);
+    order.setReservationLeaseId("still-running-claim");
+    order.setReservationLeaseUntil(Instant.now().plusSeconds(90));
+    orderRepository.save(order).block();
+
+    recoveryWorker.recoverOnce().block();
+    assertEquals(OrderEntity.RESERVING, orderRepository.findById(id).block().getStatus());
+    assertEquals(4, repository.findByProductId(761).block().getStockQuantity());
+
+    // The lease and order TTL have elapsed; no worker may now take new stock.
+    var stale = orderRepository.findById(id).block();
+    stale.setReservationLeaseUntil(Instant.now().minusSeconds(1));
+    stale.setExpiresAt(Instant.now().minusSeconds(1));
+    orderRepository.save(stale).block();
+
+    recoveryWorker.recoverOnce().block();
+    assertEquals(OrderEntity.CANCELLED, orderRepository.findById(id).block().getStatus());
+    assertEquals(4, repository.findByProductId(761).block().getStockQuantity());
+  }
+
   private void sendCreateProductEvent(int productId) {
     Product product = new Product(productId, "Name " + productId, productId, "SA");
     Event<Integer, Product> event = new Event(CREATE, productId, product);
