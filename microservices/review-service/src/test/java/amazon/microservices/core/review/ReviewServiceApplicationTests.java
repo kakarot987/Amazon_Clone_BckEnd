@@ -3,6 +3,7 @@ package amazon.microservices.core.review;
 import amazon.api.core.review.Review;
 import amazon.api.event.Event;
 import amazon.microservices.core.review.persistence.ReviewRepository;
+import amazon.microservices.core.review.persistence.ProcessedReviewEventRepository;
 import amazon.microservices.core.review.persistence.CustomerReviewRepository;
 import amazon.api.discovery.VerifiedCustomerReviewSubmission;
 import amazon.api.discovery.ReviewReportRequest;
@@ -44,6 +45,9 @@ class ReviewServiceApplicationTests extends MySqlTestBase {
   private ReviewRepository repository;
 
   @Autowired
+  private ProcessedReviewEventRepository processedEvents;
+
+  @Autowired
   private CustomerReviewRepository customerReviews;
 
   @Autowired
@@ -59,6 +63,7 @@ class ReviewServiceApplicationTests extends MySqlTestBase {
   @BeforeEach
   void setupDb() {
     repository.deleteAll();
+    processedEvents.deleteAll();
     moderationEvents.deleteAll();
     reviewReports.deleteAll();
     customerReviews.deleteAll();
@@ -318,6 +323,33 @@ class ReviewServiceApplicationTests extends MySqlTestBase {
     client.get().uri("/internal/review-moderation/reports?page=0&size=10")
       .exchange().expectStatus().isOk().expectBody()
       .jsonPath("$.totalElements").isEqualTo(1);
+  }
+
+
+  @Test
+  void reviewEventReplayIsDeduplicatedAndMismatchedPayloadRejected() {
+    Review review = new Review(993, 1, "Sample", "Subject", "Body", "SA");
+    messageProcessor.accept(new Event<>(CREATE, 993, review, "review-replay-993"));
+    messageProcessor.accept(new Event<>(CREATE, 993, review, "review-replay-993"));
+    assertEquals(1L, repository.count());
+    assertEquals(1L, processedEvents.count());
+
+    Review altered = new Review(993, 1, "Sample", "Subject", "Altered", "SA");
+    assertThrows(IllegalArgumentException.class, () -> messageProcessor.accept(
+        new Event<>(CREATE, 993, altered, "review-replay-993")));
+    assertEquals(1L, repository.count());
+  }
+
+  @Test
+  void failedReviewMutationRollsBackInboxReceipt() {
+    Review review = new Review(994, 1, "Sample", "Subject", "Body", "SA");
+    messageProcessor.accept(new Event<>(CREATE, 994, review, "review-first-994"));
+    long before = processedEvents.count();
+
+    assertThrows(InvalidInputException.class, () -> messageProcessor.accept(
+        new Event<>(CREATE, 994, review, "review-another-994")));
+    assertEquals(before, processedEvents.count());
+    assertEquals(1L, repository.count());
   }
 
   private void sendCreateReviewEvent(int productId, int reviewId) {
