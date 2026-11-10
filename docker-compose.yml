@@ -121,10 +121,11 @@ services:
     environment:
       <<: *service-env
       SERVER_PORT: 8080
+      SPRING_DATA_MONGODB_URI: mongodb://mongodb:27017/composite-outbox-db?replicaSet=rs0
       MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,info,prometheus
       MANAGEMENT_TRACING_SAMPLING_PROBABILITY: 0.1
       MANAGEMENT_ZIPKIN_TRACING_ENDPOINT: http://zipkin-server:9411/api/v2/spans
-    depends_on: [config-server, rabbitmq, product, recommendation, review, auth-server]
+    depends_on: [config-server, mongodb, rabbitmq, product, recommendation, review, auth-server]
 
   gateway:
     build: spring-cloud/gateway
