@@ -2,12 +2,16 @@ package amazon.microservices.composite.product.outbox;
 
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.index.CompoundIndex;
+import org.springframework.data.mongodb.core.index.CompoundIndexes;
 import org.springframework.data.mongodb.core.mapping.Document;
 import java.time.Instant;
 
 /** Durable publisher journal. A sent record is retained for audit and replay safety. */
 @Document("composite_outbox")
-@CompoundIndex(name="outbox_dispatch_idx", def="{'state':1,'createdAt':1,'id':1}")
+@CompoundIndexes({
+    @CompoundIndex(name="outbox_dispatch_idx", def="{'state':1,'createdAt':1,'id':1}"),
+    @CompoundIndex(name="outbox_reconcile_idx", def="{'partitionKey':1,'createdAt':-1,'_id':-1}")
+})
 public class OutboxEntry {
     public static final String PENDING = "PENDING";
     public static final String IN_FLIGHT = "IN_FLIGHT";

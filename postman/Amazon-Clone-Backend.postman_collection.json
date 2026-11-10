@@ -319,6 +319,36 @@
           }
         }
       ]
+    },
+    {
+      "name": "12 | Operator aggregate reconciliation (read-only)",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{operatorToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/product-composite/fulfillment/aggregates/{{productId}}/reconciliation",
+        "description": "Requires fulfillment:read; compares at most 100 outbox entries with downstream ID sets. No repair or replay."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Reconciliation request responds\", function () { pm.response.to.have.status(200); });",
+              "if (pm.response.code === 200) { const body = pm.response.json(); pm.test(\"Recognized diagnostic status\", () => pm.expect([\"NOT_TRACKED\", \"INCOMPLETE_HISTORY\", \"INVALID_JOURNAL\", \"PUBLISH_PENDING\", \"CONVERGING\", \"INCONCLUSIVE\", \"DRIFT_CANDIDATE\", \"OBSERVED\"]).to.include(body.status)); }"
+            ]
+          }
+        }
+      ]
     }
   ]
 }
