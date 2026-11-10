@@ -167,6 +167,8 @@ public class OrderHistoryController {
                 order.getExpiresAt());
         view.setPaymentStatus(order.getPaymentStatus());
         view.setMockPaidAt(order.getMockPaidAt());
+        view.setItems(order.getItems());
+        view.setTotal(order.getTotal());
         return view;
     }
 
