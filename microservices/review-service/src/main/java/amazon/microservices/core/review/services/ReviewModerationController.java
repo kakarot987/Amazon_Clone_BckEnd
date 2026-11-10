@@ -57,7 +57,7 @@ public class ReviewModerationController {
                                             @RequestBody ReviewReportRequest request) {
         validateIds(productId, reviewId);
         validateOwner(ownerKey);
-        if (request == null || !REASONS.contains(request.reasonCode()))
+        if (request == null || request.reasonCode() == null || !REASONS.contains(request.reasonCode()))
             throw new InvalidInputException("Unsupported report reason");
         return Mono.fromCallable(() -> {
             try {
@@ -113,8 +113,8 @@ public class ReviewModerationController {
         validateIds(productId, reviewId);
         if (action == null || action.eventId() == null
                 || !action.eventId().matches("[A-Za-z0-9._-]{8,100}")
-                || !Set.of("HIDE", "RESTORE").contains(action.action())
-                || !REASONS.contains(action.reasonCode()))
+                || action.action() == null || !Set.of("HIDE", "RESTORE").contains(action.action())
+                || action.reasonCode() == null || !REASONS.contains(action.reasonCode()))
             throw new InvalidInputException("Invalid moderation event");
         return Mono.fromCallable(() -> tx.execute(status -> {
             ReviewModerationEventEntity replay = events.findById(action.eventId()).orElse(null);
