@@ -12,7 +12,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class CommerceObservabilityTests {
     @Test
     void recordsSuccessAndErrorWithoutUserIdentifiers() {
-        try (SimpleMeterRegistry registry = new SimpleMeterRegistry()) {
+        {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
             CommerceObservability observed = new CommerceObservability(registry);
             StepVerifier.create(observed.measure("checkout", Mono.just("ok")))
                     .expectNext("ok").verifyComplete();
@@ -36,7 +37,8 @@ class CommerceObservabilityTests {
 
     @Test
     void cancellationIsCountedExactlyOnce() {
-        try (SimpleMeterRegistry registry = new SimpleMeterRegistry()) {
+        {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
             CommerceObservability observed = new CommerceObservability(registry);
             StepVerifier.create(observed.measure("reconcile", Mono.never()))
                     .thenCancel().verify(Duration.ofSeconds(2));
@@ -50,7 +52,8 @@ class CommerceObservabilityTests {
 
     @Test
     void auditAndRecoveryUseBoundedCategoricalTags() {
-        try (SimpleMeterRegistry registry = new SimpleMeterRegistry()) {
+        {
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
             CommerceObservability observed = new CommerceObservability(registry);
             observed.recoveryFailure();
             observed.auditRun(true);
