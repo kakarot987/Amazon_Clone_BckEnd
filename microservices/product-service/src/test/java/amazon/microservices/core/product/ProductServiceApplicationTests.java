@@ -1008,6 +1008,31 @@ class ProductServiceApplicationTests extends MongoDbTestBase {
       .exchange().expectStatus().isEqualTo(NOT_FOUND);
   }
 
+
+  @Test
+  void reviewPurchaseEligibilityRequiresCorrectOwnerProductAndMockPaidOrder() {
+    String id = String.format("%064x", 601);
+    OrderEntity order = new OrderEntity(id, CART_OWNER, 601, 1,
+      "Simulated purchased product", new java.math.BigDecimal("10.00"), "USD");
+    order.setStatus(OrderEntity.RESERVED);
+    orderRepository.save(order).block();
+
+    client.get().uri("/internal/review-eligibility/" + CART_OWNER + "/product/601")
+      .exchange().expectStatus().isOk().expectBody()
+      .json("false");
+    order.setStatus(OrderEntity.MOCK_PAID);
+    order = orderRepository.findById(id).block();
+    order.setStatus(OrderEntity.MOCK_PAID);
+    orderRepository.save(order).block();
+
+    client.get().uri("/internal/review-eligibility/" + CART_OWNER + "/product/601")
+      .exchange().expectStatus().isOk().expectBody().json("true");
+    client.get().uri("/internal/review-eligibility/" + OTHER_OWNER + "/product/601")
+      .exchange().expectStatus().isOk().expectBody().json("false");
+    client.get().uri("/internal/review-eligibility/" + CART_OWNER + "/product/602")
+      .exchange().expectStatus().isOk().expectBody().json("false");
+  }
+
   private void sendCreateProductEvent(int productId) {
     Product product = new Product(productId, "Name " + productId, productId, "SA");
     Event<Integer, Product> event = new Event(CREATE, productId, product);
