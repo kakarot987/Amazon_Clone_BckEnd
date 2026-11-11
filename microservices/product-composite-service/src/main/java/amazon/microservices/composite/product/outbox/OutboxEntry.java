@@ -16,6 +16,7 @@ public class OutboxEntry {
     public static final String PENDING = "PENDING";
     public static final String IN_FLIGHT = "IN_FLIGHT";
     public static final String PUBLISHED = "PUBLISHED";
+    public static final String QUARANTINED = "QUARANTINED";
 
     @Id private String id;
     private String operationId;
@@ -29,6 +30,8 @@ public class OutboxEntry {
     private String state;
     private int attempts;
     private Instant publishedAt;
+    private Instant quarantinedAt;
+    private String quarantineReason;
 
     public OutboxEntry() {}
     public OutboxEntry(String id, String bindingName, String payloadJson,
@@ -53,6 +56,8 @@ public class OutboxEntry {
     public String getState(){return state;}
     public int getAttempts(){return attempts;}
     public Instant getPublishedAt(){return publishedAt;}
+    public Instant getQuarantinedAt(){return quarantinedAt;}
+    public String getQuarantineReason(){return quarantineReason;}
     public void setId(String id){this.id=id;}
     public void setOperationId(String operationId){this.operationId=operationId;}
     public void setBindingName(String v){bindingName=v;}
@@ -65,4 +70,6 @@ public class OutboxEntry {
     public void setState(String v){state=v;}
     public void setAttempts(int v){attempts=v;}
     public void setPublishedAt(Instant v){publishedAt=v;}
+    public void setQuarantinedAt(Instant v){quarantinedAt=v;}
+    public void setQuarantineReason(String v){quarantineReason=v;}
 }

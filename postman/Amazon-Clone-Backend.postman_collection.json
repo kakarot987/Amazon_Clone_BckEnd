@@ -51,6 +51,14 @@
     {
       "key": "recheckIdempotencyKey",
       "value": ""
+    },
+    {
+      "key": "quarantinedEventId",
+      "value": ""
+    },
+    {
+      "key": "outboxRedriveKey",
+      "value": ""
     }
   ],
   "item": [
@@ -691,6 +699,83 @@
             "type": "text/javascript",
             "exec": [
               "pm.test(\"Recheck history responds\",()=>pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "23 | Operator inspect quarantined event redrive history",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{operatorToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/product-composite/fulfillment/outbox/{{quarantinedEventId}}/redrives?limit=10",
+        "description": "Requires fulfillment:read. Does not expose event payload or change any state. Populate quarantinedEventId from the oldestUndelivered event in recovery overview."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Redrive history responds\", () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "24 | Operator approve quarantined original event redrive (opt-in)",
+      "request": {
+        "method": "POST",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{operatorToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": "{{baseUrl}}/product-composite/fulfillment/outbox/{{quarantinedEventId}}/redrives",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{outboxRedriveKey}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"BROKER_RESTORED\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Requires fulfillment:write, APP_OUTBOX_QUARANTINE_ENABLED=true, a quarantined GLOBAL head, and a unique 8+ char outboxRedriveKey. Max 3 approved re-drives per original event. A successful request queues the SAME event ID, not a new business operation. Never use with real customer data."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Opt-in redrive accepted or safely rejected\", () => pm.expect([200,400,404,409,503]).to.include(pm.response.code));"
             ]
           }
         }

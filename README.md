@@ -15,6 +15,7 @@ A distributed commerce **portfolio prototype** with product discovery, carts, mu
 | [Fenced saga supervision](docs/SAGA_SUPERVISION.md) | Opt-in bounded recovery status monitor; no compensation |
 | [Operator triage](docs/SAGA_TRIAGE.md) | Review queue and idempotent investigation notes without replay |
 | [Recovery operator controls](docs/RECOVERY_CONTROLS.md) | Safe manual evidence rechecks, retry budget and queue-head diagnostics |
+| [Outbox poison quarantine](docs/OUTBOX_QUARANTINE.md) | Opt-in ordered quarantine, fenced audited re-drive and safety limits |
 | [Auth signing key hardening](docs/AUTH_HARDENING.md) | Opt-in persistent RSA JWT keys, credential checks and rotation limitations |
 | [Recovery observability](docs/RECOVERY_OBSERVABILITY.md) | Outbox/saga metrics, alerts, dashboard, failure modes |
 | [Live demo walkthrough](docs/DEMO.md) | Reproducible local demo and broker-recovery recording plan |

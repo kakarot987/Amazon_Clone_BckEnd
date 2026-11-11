@@ -44,6 +44,8 @@ public class SecurityConfig {
                         .pathMatchers(POST, "/product-composite/fulfillment/shipments").hasAuthority("SCOPE_fulfillment:write")
                         .pathMatchers(GET, "/product-composite/fulfillment/shipments/*").hasAuthority("SCOPE_fulfillment:read")
                         .pathMatchers(GET, "/product-composite/fulfillment/aggregates/*/operations").hasAuthority("SCOPE_fulfillment:read")
+                        .pathMatchers(GET, "/product-composite/fulfillment/outbox/*/redrives").hasAuthority("SCOPE_fulfillment:read")
+                        .pathMatchers(POST, "/product-composite/fulfillment/outbox/*/redrives").hasAuthority("SCOPE_fulfillment:write")
                         .pathMatchers(GET, "/product-composite/fulfillment/recovery/overview").hasAuthority("SCOPE_fulfillment:read")
                         .pathMatchers(GET, "/product-composite/fulfillment/operations/*/rechecks").hasAuthority("SCOPE_fulfillment:read")
                         .pathMatchers(POST, "/product-composite/fulfillment/operations/*/rechecks").hasAuthority("SCOPE_fulfillment:write")

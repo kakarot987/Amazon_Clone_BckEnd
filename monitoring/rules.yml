@@ -70,3 +70,10 @@ groups:
           severity: critical
         annotations:
           summary: "Composite service Prometheus scrape target unavailable"
+      - alert: CommercePublisherOutboxQuarantined
+        expr: commerce_reliability_outbox_quarantined > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Publisher outbox contains one or more quarantined events blocking ordered delivery"

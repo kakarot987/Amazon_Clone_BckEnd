@@ -85,6 +85,7 @@ public class AggregateOperationTrackingService {
 
     private Report summarize(AggregateOperation operation, Map<String, OutboxEntry> records) {
         int published = 0, pending = 0, inFlight = 0;
+        boolean quarantined = false;
         boolean corrupt = false, unknown = false;
         List<EventProgress> progress = new java.util.ArrayList<>();
 
@@ -104,6 +105,7 @@ public class AggregateOperationTrackingService {
                 case OutboxEntry.PUBLISHED -> published++;
                 case OutboxEntry.PENDING -> pending++;
                 case OutboxEntry.IN_FLIGHT -> inFlight++;
+                case OutboxEntry.QUARANTINED -> quarantined = true;
                 default -> unknown = true;
             }
             progress.add(new EventProgress(step.getEventId(), step.getBindingName(),
@@ -114,6 +116,7 @@ public class AggregateOperationTrackingService {
         String status = corrupt || records.size() != operation.getSteps().size()
                 ? "INCOMPLETE_JOURNAL"
                 : unknown ? "UNKNOWN_STATE"
+                : quarantined ? "QUARANTINED"
                 : inFlight > 0 ? "DISPATCHING"
                 : pending > 0 ? "PUBLISH_PENDING"
                 : published == operation.getSteps().size() ? "BROKER_ACCEPTED" : "UNKNOWN_STATE";

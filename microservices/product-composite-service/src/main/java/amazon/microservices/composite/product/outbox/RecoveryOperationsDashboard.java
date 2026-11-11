@@ -38,14 +38,16 @@ public class RecoveryOperationsDashboard {
         Mono<Long> review=count(SagaSupervision.NEEDS_REVIEW);
 
         Query first=Query.query(Criteria.where("state")
-                        .in(List.of(OutboxEntry.PENDING, OutboxEntry.IN_FLIGHT)))
+                        .in(List.of(OutboxEntry.PENDING, OutboxEntry.IN_FLIGHT, OutboxEntry.QUARANTINED)))
                 .with(Sort.by(Sort.Order.asc("createdAt"),Sort.Order.asc("_id")))
                 .limit(1);
         Mono<Head> head=mongo.findOne(first,OutboxEntry.class)
                 .map(event -> {
                     Instant now=Instant.now();
                     String status;
-                    if(OutboxEntry.PENDING.equals(event.getState())) {
+                    if(OutboxEntry.QUARANTINED.equals(event.getState())) {
+                        status="QUARANTINED";
+                    } else if(OutboxEntry.PENDING.equals(event.getState())) {
                         status=event.getNextAttemptAt()!=null
                                 && event.getNextAttemptAt().isAfter(now)
                                 ? "RETRY_BACKOFF" : "READY";

@@ -93,3 +93,7 @@ An operator can request `GET /product-composite/fulfillment/operations/{operatio
 ## Opt-in durable supervision
 
 Every new operation now includes a `PENDING` record in `aggregate_supervisions`, written atomically with the operation and outgoing events. The disabled-by-default background supervisor uses MongoDB atomic lease claims, generation fencing, bounded checks and read-only signed receipt observations. Operators inspect `GET /product-composite/fulfillment/operations/{operationId}/supervision` with `fulfillment:read`; no automatic replay/compensation is performed. See [supervision runbook](SAGA_SUPERVISION.md).
+
+## Opt-in publisher poison quarantine
+
+The [publisher quarantine runbook](OUTBOX_QUARANTINE.md) adds a bounded publisher retry limit (off by default), a durable `QUARANTINED` state, and an operator-only, transactionally audited redrive of the **same original event ID and payload**. The original quarantined record remains the global head and blocks later events. There is no automatic skip, event copy, unapproved replay, compensation, payment, or stock mutation. This is distinct from a broker-managed DLQ.

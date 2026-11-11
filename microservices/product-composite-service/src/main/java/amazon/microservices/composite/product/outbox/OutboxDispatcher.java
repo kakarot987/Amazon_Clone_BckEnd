@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.stream.function.StreamBridge;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
@@ -43,6 +44,12 @@ public class OutboxDispatcher {
     private final Scheduler scheduler;
     private final MeterRegistry meters;
 
+    // Opt-in by design: safe local default is unchanged until operators validate it.
+    @Value("${app.outbox.quarantine.enabled:false}")
+    private boolean quarantineEnabled;
+    @Value("${app.outbox.quarantine.max-attempts:8}")
+    private int quarantineAfterAttempts = 8;
+
     public OutboxDispatcher(ReactiveMongoTemplate mongo, ObjectMapper mapper,
                             StreamBridge bridge,
                             @Qualifier("publishEventScheduler") Scheduler scheduler,
@@ -73,12 +80,15 @@ public class OutboxDispatcher {
 
     private Mono<Boolean> dispatchHead() {
         Query oldest = Query.query(Criteria.where("state").in(
-                        List.of(OutboxEntry.PENDING, OutboxEntry.IN_FLIGHT)))
+                        List.of(OutboxEntry.PENDING, OutboxEntry.IN_FLIGHT, OutboxEntry.QUARANTINED)))
                 .with(Sort.by(Sort.Order.asc("createdAt"), Sort.Order.asc("_id")))
                 .limit(1);
         return mongo.findOne(oldest, OutboxEntry.class)
                 .flatMap(entry -> {
                     Instant now=Instant.now();
+                    // Keep the poisoned head as an ordering barrier: never skip it.
+                    if (OutboxEntry.QUARANTINED.equals(entry.getState()))
+                        return Mono.just(false);
                     if (OutboxEntry.PENDING.equals(entry.getState())
                             && entry.getNextAttemptAt()!=null
                             && entry.getNextAttemptAt().isAfter(now))
@@ -115,7 +125,7 @@ public class OutboxDispatcher {
                 })
                 .subscribeOn(scheduler)
                 .flatMap(accepted -> {
-                    if (!accepted) return retry(entry,claim);
+                    if (!accepted) return retry(entry,claim,"BROKER_REJECTED");
                     Query owned = claimQuery(entry.getId(),claim);
                     Update done=new Update().set("state",OutboxEntry.PUBLISHED)
                             .set("publishedAt",Instant.now())
@@ -130,11 +140,27 @@ public class OutboxDispatcher {
                 .onErrorResume(error -> {
                     LOG.warn("Outbox event {} delivery failed ({})",
                             entry.getId(),error.getClass().getSimpleName());
-                    return retry(entry,claim);
+                    return retry(entry,claim,"PUBLISH_EXCEPTION");
                 });
     }
 
-    private Mono<Boolean> retry(OutboxEntry entry,String claim) {
+    private Mono<Boolean> retry(OutboxEntry entry,String claim,String reason) {
+        // Opt-in terminal quarantine keeps the original event (same ID/payload)
+        // as the strict global head, blocking later publications for review.
+        if (quarantineEnabled && entry.getAttempts() >= Math.max(1, quarantineAfterAttempts)) {
+            Update blocked = new Update()
+                    .set("state",OutboxEntry.QUARANTINED)
+                    .set("quarantinedAt",Instant.now())
+                    .set("quarantineReason",reason)
+                    .unset("nextAttemptAt")
+                    .unset("leaseId").unset("leaseUntil");
+            return mongo.updateFirst(claimQuery(entry.getId(),claim),blocked,OutboxEntry.class)
+                    .map(result -> {
+                        if(result.getModifiedCount()>0)
+                            Counter.builder("commerce.outbox.quarantined").register(meters).increment();
+                        return false;
+                    });
+        }
         // Bounded exponential retry; never silently discard an event.
         int power=Math.min(8,Math.max(0,entry.getAttempts()-1));
         long seconds=Math.min(300L,1L<<power);
@@ -153,6 +179,7 @@ public class OutboxDispatcher {
         return Query.query(new Criteria().andOperator(
                 Criteria.where("_id").is(id),
                 Criteria.where("state").is(OutboxEntry.IN_FLIGHT),
-                Criteria.where("leaseId").is(claim)));
+                Criteria.where("leaseId").is(claim),
+                Criteria.where("leaseUntil").gt(Instant.now())));
     }
 }

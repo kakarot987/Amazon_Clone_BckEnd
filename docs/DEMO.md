@@ -107,3 +107,7 @@ Once the local composite service and Prometheus are healthy, open the provided G
 ## Automated end-to-end verification (local only)
 
 A stronger Python standard-library scenario now checks product/recommendation/review fan-out, not only a product HTTP 200. Follow [the verified portfolio demo instructions](DEMO_VERIFICATION.md). The runner requires `--execute` to create a **new synthetic product** and is restricted to a localhost HTTP gateway. Optional `--checkout` exercises a local mock stock reservation with a repeated idempotency key; optional `--operator` checks three historical consumer inbox receipts. The dedicated offline mock tests run in Java CI, but those tests **do not prove a real Docker Compose end-to-end demo has been performed**.
+
+## Optional opt-in quarantine and redrive demonstration
+
+On disposable local infrastructure only, enable `APP_OUTBOX_QUARANTINE_ENABLED=true` and temporarily set `APP_OUTBOX_QUARANTINE_MAX_ATTEMPTS=1`. Simulate one broker rejection, verify the original event becomes `QUARANTINED` in the operator recovery overview, and show that later events remain blocked. Restore the broker, use the scoped operator Postman redrive request (unique `Idempotency-Key`) and verify the **same original event ID** is sent on retry. Reset the feature to disabled after demonstration. **No automatic skip, dead-letter exchange, or business compensation is implemented.** See [publisher quarantine runbook](OUTBOX_QUARANTINE.md).
