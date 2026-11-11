@@ -1,6 +1,6 @@
-# Amazon Clone Backend
+# Amazon Clone — Backend + Lightweight Storefront
 
-**Java 17 · Spring Boot 3.1 · Spring Cloud · MongoDB · MySQL · RabbitMQ · OAuth2 · Docker Compose**
+**Java 17 · Spring Boot 3.1 · Spring Cloud · MongoDB · MySQL · RabbitMQ · OAuth2 · Docker Compose · Nginx static frontend**
 
 A distributed commerce **portfolio prototype** with product discovery, carts, multi-item order reservations, mock payments and fulfillment, review workflows, and deliberately tested messaging failure paths. It is **not a production e-commerce platform**: payments, shipping, and refunds are simulated.
 
@@ -8,6 +8,7 @@ A distributed commerce **portfolio prototype** with product discovery, carts, mu
 
 | Resource | Purpose |
 | --- | --- |
+| [Lightweight storefront](frontend/README.md) | One-command frontend + backend startup, auth setup, included screens, tests |
 | [Architecture](docs/ARCHITECTURE.md) | Service boundaries, data stores, consistency and failure semantics |
 | [Aggregate reconciliation](docs/RECONCILIATION.md) | Read-only operator snapshot checks, statuses and recovery gaps |
 | [Durable operation tracking](docs/OPERATIONS.md) | Atomic outbox-operation journal, publisher progress and saga boundaries |
@@ -33,7 +34,17 @@ A distributed commerce **portfolio prototype** with product discovery, carts, mu
 - **Asynchronous reliability:** composite **transactional outbox** (PR #20), retryable leased dispatcher and consumer-side processed-event inboxes (PR #19), plus a [read-only aggregate reconciliation audit](docs/RECONCILIATION.md) and [durable operation journal](docs/OPERATIONS.md) and [signed consumer inbox evidence](docs/RECEIPTS.md) for verifying tracked consumer commits. An [opt-in fenced supervisor](docs/SAGA_SUPERVISION.md) records bounded diagnostic outcomes, not business compensation. Delivery is **at least once**; this audit is **not** a complete saga or convergence guarantee.
 - **Operations:** Docker Compose, Testcontainers-backed Java CI, Prometheus/Grafana and Zipkin, plus [bounded read-only outbox/saga telemetry](docs/RECOVERY_OBSERVABILITY.md) and a local smoke test.
 
-## Run locally
+## Run the backend and frontend together
+
+After setting up your local `.env` and reviewing the external config-repo, start the entire backend plus the optional Cartlane storefront with one command:
+
+```bash
+bash scripts/start-storefront.sh
+```
+
+Open **http://localhost:8088** for the frontend (existing API gateway: **http://localhost:8443**). The storefront is a dependency-free nginx static app with product discovery, wishlist, cart, mock checkout, orders and read-only operator diagnostics. It uses the existing JWT scopes and a same-origin API proxy. Tokens are entered for **local demo sessions only** and remain in browser page memory. See [frontend setup, security details and limitations](frontend/README.md). To stop both stacks without deleting volumes, run `bash scripts/start-storefront.sh down`.
+
+## Run locally (backend only)
 
 Prerequisites: **Java 17**, trusted **Gradle 8.6** installation, **Docker Engine + Compose v2**, Bash and curl. The old Gradle wrapper was removed after an integrity issue; do not restore its unverified binary.
 
@@ -66,6 +77,7 @@ The auth server also has an [opt-in persistent signing key setup](docs/AUTH_HARD
 ```mermaid
 flowchart LR
     Client[Postman / client] -->|Bearer JWT| Gateway[Gateway :8443 HTTP]
+    Frontend[Cartlane frontend :8088] -->|same-origin /api proxy| Gateway
     Gateway --> Composite[Product composite API]
     Composite -->|HTTP reads| Product[Product service]
     Composite -->|HTTP reads| Recommendation[Recommendation service]
