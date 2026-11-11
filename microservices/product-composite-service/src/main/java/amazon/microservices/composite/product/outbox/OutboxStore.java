@@ -62,7 +62,10 @@ public class OutboxStore {
                         return Mono.error(new IllegalArgumentException("Outbox event exceeds payload limit"));
                     // Preserve within-batch order across crashes and dispatch retries.
                     OutboxEntry entry = new OutboxEntry(event.getEventId(), message.bindingName(),
-                            json, key, now.plusNanos(n++));
+                            json, key, now.plusMillis(n++));
+                    // MongoDB persists milliseconds, not nanoseconds. Separate
+                    // creation order from publish eligibility for batch siblings.
+                    entry.setNextAttemptAt(now);
                     entry.setOperationId(operationId);
                     batch.add(entry);
                     steps.add(new AggregateOperation.Step(event.getEventId(), key,

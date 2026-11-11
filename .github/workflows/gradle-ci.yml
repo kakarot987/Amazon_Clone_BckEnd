@@ -41,6 +41,7 @@ jobs:
             'CommerceSagaNeedsManualReview',
             'CommerceRecoveryTelemetryStale',
             'CommerceCompositeMetricsMissing',
+            'CommercePublisherOutboxQuarantined',
           ]
           for alert in expected:
               assert rules.count('alert: '+alert) == 1, f"Missing or duplicate alert {alert}"

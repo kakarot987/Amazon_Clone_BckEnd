@@ -8,7 +8,8 @@ All names below are Prometheus names. The Java gauge names use dots; Micrometer 
 
 | Metric | Meaning |
 | --- | --- |
-| `commerce_reliability_outbox_undelivered` | Count of outbox records in `PENDING` or `IN_FLIGHT` |
+| `commerce_reliability_outbox_undelivered` | Count of outbox records in `PENDING`, `IN_FLIGHT` or `QUARANTINED` |
+| `commerce_reliability_outbox_quarantined` | Original outbox records held in an ordering-preserving operator-review state |
 | `commerce_reliability_outbox_oldest_age_seconds` | Age of the oldest undelivered event, or zero if there is no queue head |
 | `commerce_reliability_saga_pending` | Supervision documents awaiting inspection |
 | `commerce_reliability_saga_checking` | Supervision documents currently leased for inspection |
@@ -30,6 +31,7 @@ Metrics are on the **existing** internal composite `/actuator/prometheus` target
 - `CommerceSagaNeedsManualReview`: at least one operation needs review for 5 minutes.
 - `CommerceRecoveryTelemetryStale`: telemetry hasn't refreshed for more than 3 minutes, sustained for 2 minutes.
 - `CommerceCompositeMetricsMissing`: Prometheus cannot scrape the composite endpoint for 2 minutes.
+- `CommercePublisherOutboxQuarantined`: One or more quarantined original events block ordered publication for 2 minutes.
 
 These thresholds are **portfolio demonstration defaults**, not tuned SLOs. With no matching time series, Prometheus may not evaluate staleness comparisons; also use `up{job="commerce-composite"}` to detect exporter absence. The existing Grafana commerce dashboard adds dedicated charts for backlog, oldest age, supervision states and telemetry staleness. It does not configure Alertmanager delivery, an on-call service or production alert routing.
 

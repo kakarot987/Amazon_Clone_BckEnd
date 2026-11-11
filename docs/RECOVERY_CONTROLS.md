@@ -49,3 +49,7 @@ Permitted reasons: `EVIDENCE_UPDATED`, `CONSUMER_RESTORED`, `BROKER_RECOVERED` a
 Test the MongoDB transaction rollback, idempotency on repeated keys, concurrent operator requests, three-request lifetime budget, generation fencing, authorization scopes, and outbox-head reporting on a disposable environment. The Java/Testcontainers suite covers key cases but does not replace deployment failure testing. Verify physical indexes (`saga_supervision_due_idx` on supervision and `rechecks_by_operation_idx` on request history). Mapping annotations do not ensure indexes have been deployed.
 
 True automatic recovery would require a separate design and reviewed PR with deterministic business compensations, strict event ordering, idempotency and signed outcome acknowledgements, safe quarantine/replay governance, and full cross-service fault-injection tests. Do not treat this metadata workflow as a complete business saga.
+
+## Quarantined publisher head
+
+An optional [publisher quarantine and redrive](OUTBOX_QUARANTINE.md) feature adds `QUARANTINED` as an explicit `readiness` state of the oldest undelivered outbox event. Unlike a broker dead-letter queue, the original event stays in the composite journal and acts as an ordering barrier. Operators can inspect its redrive history (read scope) and, only with `fulfillment:write`, atomically request a bounded retry of its **original event ID and payload**. The quarantine feature is disabled by default.

@@ -37,6 +37,7 @@ public class RecoveryTelemetry {
     private final AtomicLong verified = new AtomicLong();
     private final AtomicLong needsReview = new AtomicLong();
     private final AtomicLong outboxUndelivered = new AtomicLong();
+    private final AtomicLong quarantined = new AtomicLong();
     private final AtomicLong oldestUndeliveredAgeSeconds = new AtomicLong();
     private final AtomicLong lastSuccessEpochSeconds = new AtomicLong();
 
@@ -48,6 +49,7 @@ public class RecoveryTelemetry {
         gauge(metrics, "commerce.reliability.saga.receipts.verified", verified);
         gauge(metrics, "commerce.reliability.saga.needs.review", needsReview);
         gauge(metrics, "commerce.reliability.outbox.undelivered", outboxUndelivered);
+        gauge(metrics, "commerce.reliability.outbox.quarantined", quarantined);
         gauge(metrics, "commerce.reliability.outbox.oldest.age.seconds", oldestUndeliveredAgeSeconds);
         gauge(metrics, "commerce.reliability.telemetry.last.success.epoch.seconds", lastSuccessEpochSeconds);
     }
@@ -72,7 +74,7 @@ public class RecoveryTelemetry {
     /** Visible to package tests; never writes to Mongo or RabbitMQ. */
     Mono<Void> refresh() {
         Query oldest = Query.query(Criteria.where("state")
-                        .in(List.of(OutboxEntry.PENDING, OutboxEntry.IN_FLIGHT)))
+                        .in(List.of(OutboxEntry.PENDING, OutboxEntry.IN_FLIGHT, OutboxEntry.QUARANTINED)))
                 .with(Sort.by(Sort.Order.asc("createdAt"), Sort.Order.asc("_id")))
                 .limit(1);
 
@@ -88,6 +90,8 @@ public class RecoveryTelemetry {
                 count(SagaSupervision.NEEDS_REVIEW),
                 mongo.count(Query.query(Criteria.where("state")
                         .in(List.of(OutboxEntry.PENDING, OutboxEntry.IN_FLIGHT))),
+                        OutboxEntry.class),
+                mongo.count(Query.query(Criteria.where("state").is(OutboxEntry.QUARANTINED)),
                         OutboxEntry.class))
                 .flatMap(counts -> head.doOnNext(observed -> {
                     Instant now = Instant.now();
@@ -102,6 +106,7 @@ public class RecoveryTelemetry {
                     verified.set(counts.getT4());
                     needsReview.set(counts.getT5());
                     outboxUndelivered.set(counts.getT6());
+                    quarantined.set(counts.getT7());
                     oldestUndeliveredAgeSeconds.set(age);
                     // Advance only when all queries complete successfully.
                     lastSuccessEpochSeconds.set(now.getEpochSecond());
