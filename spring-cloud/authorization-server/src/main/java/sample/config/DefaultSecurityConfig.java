@@ -34,6 +34,8 @@ public class DefaultSecurityConfig {
 
     // Development-only user; use a persistent identity provider for production.
     @Bean
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
+            prefix = "auth.identity", name = "store", havingValue = "demo", matchIfMissing = true)
     UserDetailsService users(@Value("${AUTH_DEMO_USER}") String username,
                              @Value("${AUTH_DEMO_PASSWORD}") String password,
                              PasswordEncoder encoder) {

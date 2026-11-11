@@ -28,3 +28,10 @@ spring:
     activate:
       on-profile: docker
     import: "configserver:${CONFIG_SERVER_URL:http://config-server:8888}"
+
+# Single-instance, authenticated composite-write throttle; not a distributed rate limiter.
+app:
+  gateway:
+    write-rate-limit:
+      per-minute: ${GATEWAY_WRITE_RATE_LIMIT_PER_MINUTE:60}
+      max-callers: ${GATEWAY_WRITE_RATE_LIMIT_MAX_CALLERS:10000}

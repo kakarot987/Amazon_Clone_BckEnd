@@ -21,7 +21,12 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 /**
  * @author Josh Cummings
  */
-@SpringBootApplication
+// JDBC identity mode owns its DataSource and Flyway migrations explicitly.
+ // Prevent database auto-config from breaking the default in-memory demo mode.
+@SpringBootApplication(exclude = {
+    org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration.class,
+    org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration.class
+})
 public class OAuth2AuthorizationServerApplication {
 
 	public static void main(String[] args) {
