@@ -1,0 +1,35 @@
+# Opt-in persisted demo identities and OAuth2 registered clients.
+# Include docker-compose-auth-keys.yml as well for persistent JWT signing keys.
+# No MySQL port is published to the host; migration runs at auth-server startup.
+services:
+  auth-mysql:
+    image: mysql:8.0
+    networks: [backend]
+    environment:
+      MYSQL_DATABASE: auth-db
+      MYSQL_USER: auth_app
+      MYSQL_PASSWORD: ${AUTH_DB_PASSWORD:?Set AUTH_DB_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${AUTH_DB_ROOT_PASSWORD:?Set AUTH_DB_ROOT_PASSWORD in .env}
+    volumes:
+      - auth-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  auth-server:
+    environment:
+      AUTH_IDENTITY_STORE: jdbc
+      AUTH_DB_URL: jdbc:mysql://auth-mysql:3306/auth-db
+      AUTH_DB_USERNAME: auth_app
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:?Set AUTH_DB_PASSWORD in .env}
+      AUTH_SECURITY_STRICT: "true"
+      AUTH_REQUIRE_PERSISTENT_KEYS: "true"
+    depends_on:
+      - config-server
+      - eureka
+      - auth-mysql
+
+volumes:
+  auth-mysql-data:

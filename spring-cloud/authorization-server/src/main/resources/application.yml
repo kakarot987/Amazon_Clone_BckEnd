@@ -17,9 +17,15 @@ spring:
         max-interval: 10000
         max-attempts: 20
 
+# Identity store is in-memory by default; opt in explicitly to JDBC.
+auth:
+  identity:
+    store: ${AUTH_IDENTITY_STORE:demo}
+
 ---
 spring:
   config:
     activate:
       on-profile: docker
     import: "configserver:${CONFIG_SERVER_URL:http://config-server:8888}"
+

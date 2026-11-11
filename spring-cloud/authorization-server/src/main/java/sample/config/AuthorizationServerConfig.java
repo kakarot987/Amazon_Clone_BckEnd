@@ -105,6 +105,8 @@ public class AuthorizationServerConfig {
   }
 
   @Bean
+  @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
+      prefix = "auth.identity", name = "store", havingValue = "demo", matchIfMissing = true)
   public RegisteredClientRepository registeredClientRepository(
       @Value("${AUTH_WRITER_CLIENT_SECRET}") String writerClientSecret,
       @Value("${AUTH_READER_CLIENT_SECRET}") String readerClientSecret,
@@ -115,6 +117,16 @@ public class AuthorizationServerConfig {
       @Value("${AUTH_DEMO_PASSWORD}") String demoPassword,
       @Value("${AUTH_SECURITY_STRICT:false}") boolean strictMode,
       PasswordEncoder passwordEncoder) {
+    return buildDemoClientTemplates(writerClientSecret, readerClientSecret,
+        fulfillmentClientSecret, returnsClientSecret, moderatorClientSecret,
+        demoUser, demoPassword, strictMode, passwordEncoder);
+  }
+
+  static RegisteredClientRepository buildDemoClientTemplates(
+      String writerClientSecret, String readerClientSecret,
+      String fulfillmentClientSecret, String returnsClientSecret,
+      String moderatorClientSecret, String demoUser, String demoPassword,
+      boolean strictMode, PasswordEncoder passwordEncoder) {
     AuthCredentialPolicy.validate(strictMode, demoUser, demoPassword,
         writerClientSecret, readerClientSecret, fulfillmentClientSecret,
         returnsClientSecret, moderatorClientSecret);
@@ -213,9 +225,10 @@ public class AuthorizationServerConfig {
       @Value("${AUTH_JWT_KEY_ALIAS:}") String keyAlias,
       @Value("${AUTH_JWT_KEY_PASSWORD:}") String keyPassword,
       @Value("${AUTH_REQUIRE_PERSISTENT_KEYS:false}") boolean requirePersistent,
-      @Value("${AUTH_SECURITY_STRICT:false}") boolean strictMode) {
+      @Value("${AUTH_SECURITY_STRICT:false}") boolean strictMode,
+      @Value("${auth.identity.store:demo}") String identityStore) {
     RSAKey rsaKey = SigningKeyLoader.loadOrGenerate(keystorePath, storePassword,
-        keyAlias, keyPassword, requirePersistent || strictMode);
+        keyAlias, keyPassword, requirePersistent || strictMode || "jdbc".equals(identityStore));
     JWKSet jwkSet = new JWKSet(rsaKey);
     return (jwkSelector, securityContext) -> jwkSelector.select(jwkSet);
   }

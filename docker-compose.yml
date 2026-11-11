@@ -135,7 +135,10 @@ services:
   gateway:
     build: spring-cloud/gateway
     networks: [backend]
-    environment: *service-env
+    environment:
+      <<: *service-env
+      GATEWAY_WRITE_RATE_LIMIT_PER_MINUTE: ${GATEWAY_WRITE_RATE_LIMIT_PER_MINUTE:-60}
+      GATEWAY_WRITE_RATE_LIMIT_MAX_CALLERS: ${GATEWAY_WRITE_RATE_LIMIT_MAX_CALLERS:-10000}
     ports: ["127.0.0.1:8443:8443"]
     depends_on: [config-server, eureka, auth-server, product-composite]
 
