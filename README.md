@@ -18,6 +18,7 @@ A distributed commerce **portfolio prototype** with product discovery, carts, mu
 | [Auth signing key hardening](docs/AUTH_HARDENING.md) | Opt-in persistent RSA JWT keys, credential checks and rotation limitations |
 | [Recovery observability](docs/RECOVERY_OBSERVABILITY.md) | Outbox/saga metrics, alerts, dashboard, failure modes |
 | [Live demo walkthrough](docs/DEMO.md) | Reproducible local demo and broker-recovery recording plan |
+| [Verified demo contract](docs/DEMO_VERIFICATION.md) | Automated local fan-out, optional mock checkout and operator receipt checks |
 | [Postman collection](postman/Amazon-Clone-Backend.postman_collection.json) | Authenticated request flow and assertions |
 | [Sample product](samples/product-demo.json) | Non-sensitive product/review/recommendation test data |
 | [Full engineering notes](docs/REFERENCE.md) | Preserved detailed development notes, including historical draft caveats |
@@ -57,7 +58,7 @@ The smoke test checks gateway health and rejects an unauthenticated catalog requ
 ACCESS_TOKEN="your-local-demo-token" bash scripts/demo-catalog.sh
 ```
 
-The auth server also has an [opt-in persistent signing key setup](docs/AUTH_HARDENING.md) with strict local credentials; its identity/client store remains in memory. The authorization server is not published on a host port in default Compose; token acquisition needs an explicitly configured **localhost-only** development access path. Do not paste tokens into Git or commit Postman environments. The demo script creates a unique sample product, expects `202 Accepted` for persisted outgoing intent, and polls the eventually consistent read endpoint. The [walkthrough](docs/DEMO.md) covers the Postman cart/checkout flow, optional operator audit, and manual RabbitMQ outage/recovery exercise.
+The auth server also has an [opt-in persistent signing key setup](docs/AUTH_HARDENING.md) with strict local credentials; its identity/client store remains in memory. The authorization server is not published on a host port in default Compose; token acquisition needs an explicitly configured **localhost-only** development access path. Do not paste tokens into Git or commit Postman environments. The original Bash demo script checks eventual product visibility. For stronger fan-out evidence, run `python3 scripts/verify-portfolio-demo.py --execute` with an `ACCESS_TOKEN` set in your local environment; it checks the product **and** review/recommendation IDs. Add `--checkout` for an optional mock cart/order idempotency check, and `--operator` with `OPERATOR_TOKEN` for signed consumer inbox evidence. See [verification instructions](docs/DEMO_VERIFICATION.md). The [walkthrough](docs/DEMO.md) covers the Postman cart/checkout flow, optional operator audit, and manual RabbitMQ outage/recovery exercise.
 
 ## Architecture at a glance
 

@@ -23,6 +23,10 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.6'
+      - name: Verify offline portfolio scenario contract
+        run: |
+          python3 -m py_compile scripts/verify-portfolio-demo.py scripts/test_portfolio_demo.py
+          python3 -m unittest discover -s scripts -p test_portfolio_demo.py -v
       - name: Validate portfolio demo assets
         run: |
           python3 -m json.tool postman/Amazon-Clone-Backend.postman_collection.json >/dev/null
