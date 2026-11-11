@@ -103,3 +103,7 @@ With an operator `fulfillment:read` JWT, call `GET /product-composite/fulfillmen
 ## Optional recovery observability walkthrough
 
 Once the local composite service and Prometheus are healthy, open the provided Grafana commerce dashboard. The recovery panels show undelivered outbox count, oldest undelivered event age, supervision state counts and seconds since the last successful metrics refresh. During a **disposable** RabbitMQ interruption, the oldest-event age may rise while the dispatcher backs off; after recovery, watch it converge if the broker and consumers are healthy. Alert definitions are examples for a local portfolio, not evidence that alert delivery or paging is configured. See [observability runbook](RECOVERY_OBSERVABILITY.md).
+
+## Automated end-to-end verification (local only)
+
+A stronger Python standard-library scenario now checks product/recommendation/review fan-out, not only a product HTTP 200. Follow [the verified portfolio demo instructions](DEMO_VERIFICATION.md). The runner requires `--execute` to create a **new synthetic product** and is restricted to a localhost HTTP gateway. Optional `--checkout` exercises a local mock stock reservation with a repeated idempotency key; optional `--operator` checks three historical consumer inbox receipts. The dedicated offline mock tests run in Java CI, but those tests **do not prove a real Docker Compose end-to-end demo has been performed**.

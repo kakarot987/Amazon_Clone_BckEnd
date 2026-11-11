@@ -144,7 +144,7 @@
       "request": {
         "method": "GET",
         "url": "{{baseUrl}}/product-composite/{{productId}}",
-        "description": "RabbitMQ/consumers may lag; rerun manually rather than asserting immediate consistency."
+        "description": "Manual rerun until HTTP 200 and review/recommendation fan-out both pass. HTTP 200 on the product alone is insufficient evidence of complete aggregate delivery."
       },
       "event": [
         {
@@ -153,7 +153,8 @@
             "type": "text/javascript",
             "exec": [
               "pm.test(\"Eventual product read (rerun after 202 if not ready)\", function () { pm.response.to.have.status(200); });",
-              "if (pm.response.code === 200) { const p = pm.response.json(); pm.test(\"Correct product ID\", () => pm.expect(p.productId).to.eql(Number(pm.collectionVariables.get(\"productId\")))); }"
+              "if (pm.response.code === 200) { const p = pm.response.json(); pm.test(\"Correct product ID\", () => pm.expect(p.productId).to.eql(Number(pm.collectionVariables.get(\"productId\")))); }",
+              "if (pm.response.code === 200) { const p = pm.response.json(); pm.test(\"Review and recommendation eventually visible\", () => { pm.expect(p.reviews).to.be.an(\"array\"); pm.expect(p.recommendations).to.be.an(\"array\"); pm.expect(p.reviews.some(r => r.reviewId === 1)).to.eql(true); pm.expect(p.recommendations.some(r => r.recommendationId === 1)).to.eql(true); }); }"
             ]
           }
         }
