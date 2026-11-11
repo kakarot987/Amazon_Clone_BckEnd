@@ -1,0 +1,10 @@
+# Start the complete backend and lightweight storefront together:
+# docker compose -f docker-compose.yml -f docker-compose-frontend.yml up --build -d
+services:
+  storefront:
+    build: ./frontend
+    networks: [backend]
+    ports: ["127.0.0.1:8088:80"]
+    depends_on:
+      - gateway
+    restart: unless-stopped

@@ -1,0 +1,11 @@
+{
+  "name": "cartlane-portfolio-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Zero-dependency storefront for the Spring commerce backend",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "check": "node --check api.js && node --check app.js && npm test"
+  }
+}

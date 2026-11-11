@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111a2b">
+  <meta name="description" content="Cartlane — a lightweight storefront for the Java Spring commerce backend.">
+  <title>Cartlane — Commerce, simplified.</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <div class="announcement">BUILT FOR THE BACKEND · An event-driven commerce demo, not a live shop</div>
+  <header class="site-header">
+    <div class="shell header-inner">
+      <a href="#shop" class="brand" aria-label="Cartlane home">
+        <span class="brand-icon" aria-hidden="true">◈</span>
+        <span>cartlane<span class="brand-dot">.</span></span>
+      </a>
+      <nav class="desktop-nav" aria-label="Primary">
+        <a href="#shop" data-nav="shop">Discover</a>
+        <a href="#saved" data-nav="saved">Wishlist</a>
+        <a href="#orders" data-nav="orders">My orders</a>
+        <a href="#ops" data-nav="ops">System status</a>
+      </nav>
+      <div class="header-actions">
+        <span id="api-status" class="api-indicator" aria-live="polite">Checking API</span>
+        <button type="button" class="icon-button session-button" data-action="session" aria-label="Manage API session" title="API session">◎</button>
+        <button type="button" class="cart-button" data-action="navigate" data-page="cart">
+          <span aria-hidden="true">▣</span><span>Bag</span><span id="cart-count" class="cart-count">0</span>
+        </button>
+      </div>
+    </div>
+  </header>
+  <main id="content" tabindex="-1">
+    <div id="app" class="shell" aria-live="polite"></div>
+  </main>
+  <footer class="site-footer">
+    <div class="shell footer-inner">
+      <div><strong>cartlane.</strong><p>Made to demonstrate a robust Java backend.</p></div>
+      <div><p>Spring Boot · RabbitMQ · MongoDB · MySQL</p><p>Payments and shipping are simulated. No real purchase is possible.</p></div>
+    </div>
+  </footer>
+  <nav class="mobile-nav" aria-label="Mobile">
+    <a href="#shop" data-nav="shop">Discover</a>
+    <a href="#saved" data-nav="saved">Saved</a>
+    <a href="#cart" data-nav="cart">Bag</a>
+    <a href="#orders" data-nav="orders">Orders</a>
+    <a href="#ops" data-nav="ops">System</a>
+  </nav>
+  <dialog id="session-dialog" class="modal" aria-labelledby="session-title">
+    <form method="dialog" class="modal-inner">
+      <div class="modal-heading"><div><p class="eyebrow">LOCAL SESSION</p><h2 id="session-title">Connect to the backend</h2></div><button class="close-button" aria-label="Close session dialog" value="cancel">×</button></div>
+      <p class="muted">Paste a short-lived, signed-in <strong>OAuth2 access token</strong> issued by your local auth server. Tokens stay in page memory and disappear when you reload.</p>
+      <label for="access-token">Customer JWT</label>
+      <textarea id="access-token" rows="3" autocomplete="off" spellcheck="false" placeholder="eyJ..."></textarea>
+      <label for="operator-token">Optional operator JWT (fulfillment:read)</label>
+      <textarea id="operator-token" rows="2" autocomplete="off" spellcheck="false" placeholder="eyJ..."></textarea>
+      <p class="helper">The demo user token—not a client-credentials token—is required for carts and orders. Never paste real customer tokens.</p>
+      <div class="modal-buttons"><button type="button" class="button button-outline" data-action="clear-session">Disconnect</button><button type="button" class="button button-primary" data-action="save-session">Connect</button></div>
+    </form>
+  </dialog>
+  <dialog id="create-dialog" class="modal" aria-labelledby="create-title">
+    <form method="dialog" class="modal-inner" id="create-form">
+      <div class="modal-heading"><div><p class="eyebrow">DEMO CATALOG</p><h2 id="create-title">Publish a product</h2></div><button class="close-button" aria-label="Close product dialog" value="cancel">×</button></div>
+      <p class="muted">Requires product:write. The backend returns 202 while the event-driven consumers process the new item.</p>
+      <label for="new-product-name">Product name</label><input id="new-product-name" name="name" required minlength="3" maxlength="100" placeholder="Studio headphones">
+      <div class="form-grid"><div><label for="new-product-price">Price (INR)</label><input id="new-product-price" name="price" type="number" min="1" step="0.01" required placeholder="2499"></div>
+      <div><label for="new-product-stock">Available stock</label><input id="new-product-stock" name="stock" type="number" min="0" max="9999" value="15" required></div></div>
+      <label for="new-product-category">Category</label><select id="new-product-category" name="category"><option>electronics</option><option>home</option><option>fashion</option><option>books</option><option>accessories</option></select>
+      <div class="modal-buttons"><button type="button" class="button button-outline" data-action="close-create">Cancel</button><button class="button button-primary" type="submit">Publish product</button></div>
+    </form>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

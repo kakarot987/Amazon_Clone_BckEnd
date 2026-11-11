@@ -23,6 +23,14 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.6'
+      - name: Set up Node.js 20 for dependency-free frontend tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Verify storefront source and API adapter contracts
+        run: |
+          npm --prefix frontend run check
+          bash -n scripts/start-storefront.sh
       - name: Verify offline portfolio scenario contract
         run: |
           python3 -m py_compile scripts/verify-portfolio-demo.py scripts/test_portfolio_demo.py
