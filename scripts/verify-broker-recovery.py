@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import signal
@@ -13,7 +14,15 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-COMPOSE = ["docker", "compose", "-f", "docker-compose.yml"]
+COMPOSE_FILES = ["docker", "compose", "-f", "docker-compose.yml",
+                 "-f", "docker-compose.recovery.yml"]
+PROJECT_PATTERN = re.compile(r"portfolio-recovery-[a-z0-9][a-z0-9-]{0,29}$")
+
+
+def compose_for(project_name):
+    if not PROJECT_PATTERN.fullmatch(project_name):
+        raise DemoError("Dedicated Compose project portfolio-recovery-* required")
+    return COMPOSE_FILES + ["--project-name", project_name]
 spec = importlib.util.spec_from_file_location(
     "portfolio_demo", Path(__file__).resolve().parent / "verify-portfolio-demo.py")
 demo = importlib.util.module_from_spec(spec)
@@ -47,15 +56,25 @@ def require_local_docker(run):
         raise DemoError("Refusing to operate on nonlocal Docker context")
 
 
-def broker_running(run):
-    return bool(run(COMPOSE + ["ps", "--status", "running", "-q", "rabbitmq"]))
+def verify_broker_identity(run, compose, project_name):
+    container_id = run(compose + ["ps", "-q", "rabbitmq"])
+    if not container_id or "\n" in container_id:
+        raise DemoError("Expected one broker container in dedicated Compose project")
+    label = run(["docker", "inspect", "--format",
+                 '{{index .Config.Labels "com.docker.compose.project"}}', container_id])
+    if label != project_name:
+        raise DemoError("Broker Compose project label mismatch; refusing to stop it")
 
 
-def restore_broker(run, sleep, attempts=40):
-    run(COMPOSE + ["start", "rabbitmq"], timeout=120)
+def broker_running(run, compose):
+    return bool(run(compose + ["ps", "--status", "running", "-q", "rabbitmq"]))
+
+
+def restore_broker(run, sleep, compose, attempts=40):
+    run(compose + ["start", "rabbitmq"], timeout=120)
     for index in range(attempts):
         try:
-            run(COMPOSE + ["exec", "-T", "rabbitmq",
+            run(compose + ["exec", "-T", "rabbitmq",
                            "rabbitmq-diagnostics", "-q", "ping"])
             return
         except DemoError:
@@ -107,6 +126,8 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--disposable-stack", action="store_true")
+    parser.add_argument("--project-name", required=True,
+                        help="Dedicated Compose project named portfolio-recovery-*")
     parser.add_argument("--save-evidence", action="store_true")
     parser.add_argument("--base-url", default=os.getenv("BASE_URL", demo.DEFAULT_BASE))
     parser.add_argument("--product-id", type=int)
@@ -115,6 +136,8 @@ def parse_args(argv=None):
     args = parser.parse_args(argv)
     if not args.execute or not args.disposable_stack:
         parser.error("Both --execute and --disposable-stack are required")
+    if not PROJECT_PATTERN.fullmatch(args.project_name):
+        parser.error("Use --project-name portfolio-recovery-* for a dedicated stack")
     if not (1 <= args.attempts <= 200 and 0 < args.interval <= 60):
         parser.error("Invalid polling attempts or interval")
     if args.product_id is not None and not 1 <= args.product_id <= 2_147_483_647:
@@ -129,8 +152,10 @@ def run_drill(args, run=docker, sleep=time.sleep, client=None):
     if not user_token or not operator_token:
         raise DemoError("Set ACCESS_TOKEN and OPERATOR_TOKEN in local environment")
     client = client or demo.DemoClient(args.base_url, user_token, operator_token)
+    compose = compose_for(args.project_name)
     require_local_docker(run)
-    if not broker_running(run):
+    verify_broker_identity(run, compose, args.project_name)
+    if not broker_running(run, compose):
         raise DemoError("RabbitMQ is not running in the local Compose project")
 
     product_id = args.product_id or 100_000 + secrets.randbelow(1_900_000_000)
@@ -139,8 +164,8 @@ def run_drill(args, run=docker, sleep=time.sleep, client=None):
     print("Disposable broker drill productId=" + str(product_id), flush=True)
     # The finally block also runs when the stop command partially succeeds then fails.
     try:
-        run(COMPOSE + ["stop", "rabbitmq"], timeout=120)
-        if broker_running(run):
+        run(compose + ["stop", "rabbitmq"], timeout=120)
+        if broker_running(run, compose):
             raise DemoError("RabbitMQ still running after stop")
         stopped = datetime.now(timezone.utc)
         status, _ = client.request("POST", "/product-composite",
@@ -155,11 +180,12 @@ def run_drill(args, run=docker, sleep=time.sleep, client=None):
         print("PASS HTTP 202 during outage; aggregate not complete", flush=True)
     finally:
         try:
-            restore_broker(run, sleep)
+            restore_broker(run, sleep, compose)
         except DemoError as exc:
             raise DemoError(
-                "CRITICAL: automatic restart failed. Run "
-                "'docker compose start rabbitmq' locally and check broker health."
+                "CRITICAL: automatic restart failed. Use the dedicated recovery "
+                "Compose files and --project-name " + args.project_name
+                + " to restart rabbitmq locally."
             ) from exc
 
     restored = datetime.now(timezone.utc)
