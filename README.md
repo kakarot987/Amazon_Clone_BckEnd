@@ -4,6 +4,18 @@
 
 A distributed commerce **portfolio prototype** with product discovery, carts, multi-item order reservations, mock payments and fulfillment, review workflows, and deliberately tested messaging failure paths. It is **not a production e-commerce platform**: payments, shipping, and refunds are simulated.
 
+## In three minutes: why this project matters
+
+**Problem:** A commerce API must accept orders while keeping product, review, inventory and fulfillment data consistent enough to investigate failures across independent services.
+
+**Approach:** Java/Spring Boot services communicate through a Spring Cloud Gateway and RabbitMQ, with separate MongoDB/MySQL persistence boundaries. The composite service records intended product changes in a transactional outbox, dispatches with leases/retries, and consumers use deduplication inboxes. OAuth2/JWT scopes distinguish user and operator access.
+
+**Evidence available in the repository:** Java/Testcontainers integration tests; automated offline demonstration contract checks; source-controlled reproducible local flow scripts; read-only reconciliation and recovery diagnostics. See [verification contract](docs/DEMO_VERIFICATION.md), [architecture](docs/ARCHITECTURE.md), and [operations](docs/OPERATIONS.md).
+
+**What has *not* been proven by this repository alone:** A successful recorded full Docker Compose deployment, a live broker-outage recording, measured production throughput/SLOs, exactly-once delivery, real payment settlement, or distributed saga compensation. Publisher acceptance is not a broker-confirmed durable publication guarantee. Do not present simulated operations as production features.
+
+**Suggested reviewer path:** Inspect the [architecture diagram](#architecture-at-a-glance), follow the [authenticated product fan-out verification](docs/DEMO_VERIFICATION.md), then browse [failure semantics and operator controls](docs/RECOVERY_CONTROLS.md).
+
 ## Start here
 
 | Resource | Purpose |
