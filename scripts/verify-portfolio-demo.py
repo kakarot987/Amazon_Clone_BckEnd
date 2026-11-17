@@ -14,6 +14,10 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+
+EVIDENCE_DIR = Path("demo-evidence")
 
 DEFAULT_BASE = "http://localhost:8443"
 
@@ -209,6 +213,8 @@ def parse_args(argv=None):
     parser.add_argument("--attempts", type=int, default=40)
     parser.add_argument("--interval", type=float, default=3)
     parser.add_argument("--base-url", default=os.getenv("BASE_URL", DEFAULT_BASE))
+    parser.add_argument("--save-evidence", action="store_true",
+                        help="Write a private, credential-free JSON report only on success")
     parser.add_argument("--product-id", type=int,
                         help="Unique disposable positive Java int (default random)")
     args = parser.parse_args(argv)
@@ -219,6 +225,42 @@ def parse_args(argv=None):
     if args.product_id is not None and not (1 <= args.product_id <= 2_147_483_647):
         parser.error("--product-id must be a positive 32-bit signed integer")
     return args
+
+
+def save_evidence(client, product_id, checkout, operator):
+    """Record verified local HTTP outcomes; never persist credentials or API bodies."""
+    now = datetime.now(timezone.utc)
+    timestamp = now.isoformat(timespec="seconds").replace("+00:00", "Z")
+    evidence = {
+        "schema_version": 1,
+        "recorded_at_utc": timestamp,
+        "source": "local-gateway-verification-cli",
+        "gateway_url": client.base_url,
+        "synthetic_product_id": product_id,
+        "checks": {
+            "gateway_health_and_anonymous_denial": "passed",
+            "composite_create_http_202": "passed",
+            "product_review_recommendation_readback": "passed",
+            "mock_checkout_idempotency": "passed" if checkout else "not_requested",
+            "signed_consumer_inbox_receipts": "passed" if operator else "not_requested"
+        },
+        "not_verified_by_this_script": [
+            "full_compose_startup", "rabbitmq_outage_and_recovery",
+            "real_payments", "production_readiness"
+        ]
+    }
+    try:
+        EVIDENCE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+        filename = f"verified-{now.strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(4)}.json"
+        destination = EVIDENCE_DIR / filename
+        fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            json.dump(evidence, output, indent=2, sort_keys=True)
+            output.write("\n")
+    except OSError as error:
+        raise DemoError("Could not save local evidence report") from error
+    print(f"PASS saved private local evidence report: {destination}", flush=True)
+    return destination
 
 
 def main(argv=None):
@@ -242,6 +284,8 @@ def main(argv=None):
     if args.operator:
         check_operator(client, product_id, args.attempts, args.interval)
     print("PASS requested local demonstration checks completed", flush=True)
+    if args.save_evidence:
+        save_evidence(client, product_id, args.checkout, args.operator)
     return 0
 
 

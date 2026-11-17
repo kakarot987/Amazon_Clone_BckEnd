@@ -3,6 +3,10 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import json
+import os
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 
@@ -130,6 +134,58 @@ class PortfolioDemoTests(unittest.TestCase):
                 "--attempts", "4", "--interval", "0.01"]))
         self.assertEqual(3, fake.reads)
         self.assertEqual(2, fake.receipts)
+
+    def test_private_evidence_contains_only_bounded_passes(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+                demo, "EVIDENCE_DIR", Path(tmp)):
+            client = FakeClient(321001)
+            client.base_url = "http://localhost:8443"
+            path = demo.save_evidence(client, 321001, checkout=True, operator=False)
+            self.assertTrue(path.is_file())
+            self.assertEqual(0o600, path.stat().st_mode & 0o777)
+            evidence = json.loads(path.read_text())
+            self.assertEqual("local-gateway-verification-cli", evidence["source"])
+            self.assertEqual("passed", evidence["checks"]["mock_checkout_idempotency"])
+            self.assertEqual("not_requested", evidence["checks"]["signed_consumer_inbox_receipts"])
+            self.assertIn("rabbitmq_outage_and_recovery",
+                          evidence["not_verified_by_this_script"])
+            self.assertNotIn("ACCESS_TOKEN", path.read_text())
+            self.assertNotIn("OPERATOR_TOKEN", path.read_text())
+
+    def test_failure_does_not_create_evidence_report(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+                demo, "EVIDENCE_DIR", Path(tmp)), patch.dict(
+                demo.os.environ, {"ACCESS_TOKEN": "test-user-token"}, clear=True):
+            client = FakeClient(321001)
+            original = client.request
+
+            def reject_create(method, path, payload=None, token="user", headers=None):
+                if method == "POST" and path == "/product-composite":
+                    return 503, None
+                return original(method, path, payload, token, headers)
+
+            client.request = reject_create
+            with patch.object(demo, "DemoClient", return_value=client):
+                with self.assertRaises(demo.DemoError):
+                    demo.main(["--execute", "--product-id", "321001",
+                               "--save-evidence", "--attempts", "1"])
+            self.assertEqual([], list(Path(tmp).iterdir()))
+
+    def test_successful_cli_run_may_save_minimal_report(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+                demo, "EVIDENCE_DIR", Path(tmp)), patch.dict(
+                demo.os.environ, {"ACCESS_TOKEN": "never-persist-me"}, clear=True):
+            client = FakeClient(321001)
+            client.base_url = "http://localhost:8443"
+            with patch.object(demo, "DemoClient", return_value=client):
+                self.assertEqual(0, demo.main([
+                    "--execute", "--product-id", "321001",
+                    "--save-evidence", "--attempts", "4", "--interval", "0.01"]))
+            reports = list(Path(tmp).glob("verified-*.json"))
+            self.assertEqual(1, len(reports))
+            report = reports[0].read_text()
+            self.assertNotIn("never-persist-me", report)
+            self.assertIn('"product_review_recommendation_readback": "passed"', report)
 
     def test_operator_token_is_mandatory_in_operator_mode(self):
         with patch.dict(demo.os.environ, {"ACCESS_TOKEN": "test"}, clear=True):

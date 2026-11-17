@@ -40,3 +40,6 @@ ML-labb
 *.jks
 *.pem
 *.key
+
+# Private local verification results (inspect/redact before any sharing)
+/demo-evidence/

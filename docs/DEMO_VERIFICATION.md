@@ -40,6 +40,18 @@ The script lists operations for the new product and checks the signed internal i
 
 The default poll budget is 40 attempts every three seconds. For a slower local machine: `--attempts 80 --interval 3`. Use `--product-id` only for a **fresh, unused** 32-bit positive integer. Failure exits nonzero and reports only status/category, not response bodies containing sensitive data. The script does not print or persist token values.
 
+## Optional private, machine-readable evidence
+
+After configuring a disposable **local** stack and obtaining a signed-in token in your **local environment** (never commit it), you can generate a minimal JSON report:
+
+```bash
+python3 scripts/verify-portfolio-demo.py --execute --checkout --operator --save-evidence
+```
+
+The `--save-evidence` flag writes a new `demo-evidence/verified-*.json` **only if every requested live HTTP check completes successfully**. The directory is Git-ignored and the file is created with owner-only permissions (0600). It records a UTC timestamp, local gateway URL, synthetic product ID, and fixed pass/not-requested statuses. It **never** includes bearer tokens, customer data, raw response bodies, order IDs, or idempotency keys. Review files before sharing them, even though they are designed to be minimal.
+
+The report is **not** a guarantee of a full Docker startup, manually stopped/restarted RabbitMQ, production readiness, or real payment processing. In particular, the broker recovery scenario must still be demonstrated and recorded separately. Offline mocked unit tests cover the report writer but must not be presented as a real local run. Do not manually create or edit a passing report and describe it as independently attested evidence.
+
 ## Manual broker interruption drill
 
 Use the existing [disposable-stack walkthrough](DEMO.md). Start the healthy stack first, then `docker compose stop rabbitmq`, submit a fresh synthetic create using the script or Postman (the demo script will return failure if the broker cannot recover within its poll budget), and **restore RabbitMQ** with `docker compose start rabbitmq` in a separate terminal. Recheck the same product ID and operator event receipts, monitoring Grafana/Prometheus outbox backlog. Keep your broker restore command prepared before stopping it.
