@@ -9,7 +9,7 @@ This checklist is a template for a **future verified local demo**, not a record 
 | 3 | Product, review and recommendation converge after event fan-out | Script's three-ID success checks | Not recorded |
 | 4 | Optional mock cart and checkout idempotency | Same order ID for repeated idempotency key, no real payment | Not recorded |
 | 5 | Optional operator read-only receipt evidence | Summary of three signed inbox receipts (redact tokens) | Not recorded |
-| 6 | Stop/restart RabbitMQ and observe recovery | Timestamped sanitized backlog/eventual convergence | Not recorded |
+| 6 | Stop/restart RabbitMQ and observe recovery | Use the [disposable local recovery drill](BROKER_RECOVERY_DRILL.md) and retain sanitized evidence | Not recorded |
 | 7 | Record one controlled performance test if desired | Hardware, test setup, run command, measured result and limitations | Not measured |
 
 ## Local commands
