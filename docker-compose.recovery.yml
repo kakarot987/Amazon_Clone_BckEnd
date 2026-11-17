@@ -1,0 +1,5 @@
+# Override only for the opt-in disposable RabbitMQ recovery drill.
+# --project-name supplies COMPOSE_PROJECT_NAME to interpolation.
+networks:
+  backend:
+    name: ${COMPOSE_PROJECT_NAME:?Provide --project-name}_backend
