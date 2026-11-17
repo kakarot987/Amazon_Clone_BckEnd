@@ -26,6 +26,13 @@ class DemoError(RuntimeError):
     pass
 
 
+class RejectRedirects(urllib.request.HTTPRedirectHandler):
+    """Never forward user/operator credentials to a redirect target."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class DemoClient:
     def __init__(self, base_url, token, operator_token=None, timeout=12):
         parsed = urllib.parse.urlparse(base_url)
@@ -39,6 +46,10 @@ class DemoClient:
         self.token = token
         self.operator_token = operator_token
         self.timeout = timeout
+        # Ignore proxy environment variables and reject all HTTP redirects.
+        # The gateway is local; credentials must never leave localhost.
+        self._opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), RejectRedirects())
 
     def request(self, method, path, payload=None, token="user", headers=None):
         if not path.startswith("/") or path.startswith("//"):
@@ -57,12 +68,14 @@ class DemoClient:
         req = urllib.request.Request(self.base_url + path, data=data, headers=metadata,
                                      method=method)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+            with self._opener.open(req, timeout=self.timeout) as response:
                 raw = response.read(500_000)
                 return response.status, self._json(raw)
         except urllib.error.HTTPError as error:
             # Never print response bodies: they might contain credentials or PII.
             error.read(1024)
+            if 300 <= error.code < 400:
+                raise DemoError("Gateway redirect rejected; refusing to forward credentials") from error
             return error.code, None
         except (urllib.error.URLError, TimeoutError, OSError) as error:
             raise DemoError("Gateway unavailable; inspect local container logs") from error

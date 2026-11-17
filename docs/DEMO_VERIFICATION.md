@@ -10,6 +10,9 @@ Obtain a **signed-in user** access token with `product:read`, `product:write` an
 
 The scripts intentionally do **not** obtain/refresh tokens automatically, expose new ports, change Compose networking or create real payments.
 
+The local-only verification client also **rejects HTTP redirects** (even same-origin redirects) and ignores proxy environment settings. This prevents its demo-user and operator bearer tokens from being forwarded to an unexpected destination. A 3xx reply fails the verification rather than following `Location`; configure the correct localhost gateway root and retry. This is a client-side guard, not a replacement for TLS or reviewed server-side authentication.
+
+
 ## Live scenarios (run locally)
 
 Start from a healthy stack, then export `ACCESS_TOKEN` and optionally `OPERATOR_TOKEN` **locally**. Keep tokens out of command-line arguments and shell history.

@@ -2,6 +2,9 @@
 """Offline contract tests; no Docker, network or customer tokens required."""
 import importlib.util
 from pathlib import Path
+import io
+import urllib.error
+import urllib.request
 import unittest
 import json
 import os
@@ -70,6 +73,47 @@ class PortfolioDemoTests(unittest.TestCase):
                     demo.DemoClient(base, "dummy")
         self.assertEqual("http://localhost:8443",
                          demo.DemoClient("http://localhost:8443/", "dummy").base_url)
+
+    def test_gateway_never_uses_proxy_or_forwards_redirect_auth(self):
+        client = demo.DemoClient("http://localhost:8443", "sensitive-user",
+                                 "sensitive-operator")
+        handlers = client._opener.handlers
+        self.assertTrue(any(isinstance(handler, demo.RejectRedirects)
+                            for handler in handlers))
+        self.assertFalse(any(isinstance(handler, urllib.request.ProxyHandler)
+                             and handler.proxies for handler in handlers))
+
+        request = urllib.request.Request(
+            "http://localhost:8443/product-composite/123",
+            headers={"Authorization": "Bearer sensitive-user"})
+        handler = demo.RejectRedirects()
+        for url in ("https://attacker.example.invalid/collect",
+                    "http://localhost:8443/unexpected",
+                    "http://127.0.0.1:8000/other-service"):
+            with self.subTest(url=url):
+                self.assertIsNone(handler.redirect_request(
+                    request, None, 302, "Found", {"Location": url}, url))
+
+    def test_redirect_response_fails_closed_without_following_it(self):
+        client = demo.DemoClient("http://localhost:8443", "secret-token")
+        redirect = urllib.error.HTTPError(
+            "http://localhost:8443/product-composite/1", 302, "Found",
+            {"Location": "https://attacker.example.invalid/collect"},
+            io.BytesIO(b""))
+        with patch.object(client._opener, "open", side_effect=redirect) as opened:
+            with self.assertRaisesRegex(demo.DemoError, "redirect rejected"):
+                client.request("GET", "/product-composite/1")
+        opened.assert_called_once()
+
+    def test_local_client_still_returns_expected_auth_denial(self):
+        client = demo.DemoClient("http://localhost:8443", "token")
+        denied = urllib.error.HTTPError(
+            "http://localhost:8443/product-composite/1", 401, "Unauthorized",
+            {}, io.BytesIO(b""))
+        with patch.object(client._opener, "open", side_effect=denied):
+            self.assertEqual(
+                (401, None), client.request("GET", "/product-composite/1",
+                                            token="none"))
 
     def test_requires_explicit_execute_flag(self):
         with self.assertRaises(SystemExit):
